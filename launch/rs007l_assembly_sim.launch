@@ -1,0 +1,34 @@
+<launch>
+  <!-- Declare all the args you want to make configurable -->
+  <arg name="simulation" default="false" />
+  <arg name="ip" default="192.168.0.2" />
+  <arg name="robot" default="RS007L" />
+  <!-- Add others like debug, viewer, etc., if needed -->
+
+  <!-- Pass them to the included bringup launch -->
+  <include file="$(find khi_robot_bringup)/launch/rs007l_bringup.launch">
+    <arg name="robot" value="$(arg robot)" />
+    <arg name="simulation" value="$(arg simulation)" />
+    <arg name="ip" value="$(arg ip)" />
+  </include>
+
+  <include file="$(find khi_rs007l_moveit_config)/launch/moveit_planning_execution.launch">
+  </include>
+
+  <!-- Add joint commander script -->
+  <node
+    name="joint_commander"
+    pkg="isaac_ros_bridge"
+    type="joint_commander.py"
+    output="screen"
+    cwd="node"
+  />
+
+  <node
+    name="isaac_gym_sim"
+    pkg="isaac_ros_bridge"
+    type="gym_test.py"
+    output="screen"
+    cwd="node"
+  />
+</launch>

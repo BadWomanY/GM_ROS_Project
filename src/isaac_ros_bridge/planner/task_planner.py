@@ -111,6 +111,7 @@ class TaskPlanner():
     
     def create_task_lib_r3(self):
         # Robot 3 sub-tasks
+        """Part 1 welding tasks."""
         weld_order = [0, 3, 1, 2, 4, 5, 6]
         hover_offset = 0.15
 
@@ -144,6 +145,18 @@ class TaskPlanner():
             self.task_lib[task_name] = task
 
             self.r3_task_queue.append(task)
+        
+        """Welding return home after part 1 welding."""
+        home_pos = self.sim.init_pos[:, 2]
+        home_rot = weld_rot
+        home_pose = torch.cat([home_pos, home_rot], dim=1)
+        welding_task_num = len(self.r3_task_queue)
+        self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
+        self.r3_task_queue.append(self.r3_return)
+        self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+
+        """Part 2 welding tasks."""
+        #TODO
     
     def assignment_func(self, cur_arm_task:list, task_queue:deque, 
                         hand_pos:torch.Tensor, part_pos:torch.Tensor, timer=0, real_timer=0):

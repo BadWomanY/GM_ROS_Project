@@ -179,150 +179,167 @@ class ArmController3:
         corners_world = quat_rotate(quat.unsqueeze(0).expand(8,4), corners_local) + center.unsqueeze(0)
         return corners_world.min(dim=0).values, corners_world.max(dim=0).values
 
-    # def _real_weld_controller(self, goal_rot, dt, gripper_mode):
-    #     self._lookup_real_ee_pose()
-
-    #     hand_pos = self.ee_pos_real.unsqueeze(0)
-    #     hand_rot = self.ee_rot_real.unsqueeze(0)
-
-    #     if self.waypoint_idx[0] >= len(self.waypoints):
-    #         return
-
-    #     advance_thresh = 0.013
-    #     max_lookahead = 8  # Number of future waypoints to include
-    #     lookahead_traj = []
-
-    #     idx = self.waypoint_idx[0].item()
-    #     q_start = self.q_real.clone()
-
-    #     for step_ahead in range(max_lookahead):
-    #         i = idx + step_ahead
-    #         if i >= len(self.waypoints):
-    #             break
-
-    #         goal_pos = self.waypoints[i][0]
-    #         pos_err = goal_pos - hand_pos[0]
-    #         ori_err = orientation_error(goal_rot, hand_rot)[0]
-
-    #         dpose = torch.cat([
-    #             torch.clamp(pos_err, -0.01, 0.01),
-    #             torch.clamp(ori_err, -0.2, 0.2)
-    #         ], dim=-1).unsqueeze(-1)
-
-    #         # Build fake dof buffer using real q
-    #         dof_real = self.sim.dof_pos.clone()
-    #         dof_real[0, self.arm_idx, :self.arm_dof] = q_start.unsqueeze(-1)
-
-    #         # IK to compute delta_q for this step
-    #         delta_q = control_ik_nullspace(
-    #             dpose.unsqueeze(0), self.sim.j_eef3[:1], 1, dof_real,
-    #             self.robot_mids, self.arm_idx, self.arm_dof
-    #         )[0]
-
-    #         q_next = q_start + delta_q
-    #         q_next = tensor_clamp(
-    #         q_next,
-    #         self.sim.robot_lower_limits_tensor[:self.arm_dof],
-    #         self.sim.robot_upper_limits_tensor[:self.arm_dof],
-    #         )
-    #         lookahead_traj.append(q_next.clone())
-    #         q_start = q_next  # advance seed for next point
-
-    #         # Optional: simulate EEF moving forward
-    #         hand_pos += quat_rotate(hand_rot, (goal_pos - hand_pos[0]).unsqueeze(0))
-
-    #     # === Publish lookahead trajectory ===
-    #     traj = JointTrajectory()
-    #     traj.header = Header(stamp=rospy.Time.now())
-    #     traj.joint_names = self.joint_names
-
-    #     for i, q in enumerate(lookahead_traj):
-    #         pt = JointTrajectoryPoint()
-    #         pt.positions = q.tolist()
-    #         pt.time_from_start = rospy.Duration((i + 1) * 0.1)  # 150ms per step
-    #         traj.points.append(pt)
-
-    #     self.ros_pub.publish(traj)
-
-    #     # === Maintain same timer + waypoint advancement logic ===
-    #     goal_pos = self.waypoints[self.waypoint_idx[0]][0]
-    #     pos_err = goal_pos - hand_pos[0]
-    #     if torch.norm(pos_err) < advance_thresh:
-    #         self.waypoint_idx += 1
-    #         self.waypoint_idx.clamp_(max=len(self.waypoints) - 1)
-
-    #     if torch.norm(pos_err) < advance_thresh and self.waypoint_idx[0] == len(self.waypoints) - 1 and gripper_mode == "auto":
-    #         if self.real_timer < 2.0:
-    #             self.real_timer += dt
-    #     else:
-    #         self.real_timer = 0.0
-
-    #     return self.real_timer
-
-    # ---------- real robot stepwise control ----------
     def _real_weld_controller(self, goal_rot, dt, gripper_mode, plan_mode):
+        # 1) update real ee pose & joint states
         self._lookup_real_ee_pose()
+        hand_pos = self.ee_pos_real.unsqueeze(0)   # (1,3)
+        hand_rot = self.ee_rot_real.unsqueeze(0)   # (1,4)
 
-        hand_pos = self.ee_pos_real.unsqueeze(0)  # (1, 3)
-        hand_rot = self.ee_rot_real.unsqueeze(0)  # (1, 4)
-
-        # Early exit if we're already done
+        # 2) check if we’re done
         if self.ros_waypoint_idx[0] >= len(self.waypoints):
-            return
+            return self.real_timer, None, None
 
-        # Current target waypoint (only 1 env)
-        goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]  # (3,)
-        pos_err = goal_pos - hand_pos[0]  # (3,)
+        # 3) decide grip actions & advance waypoint index
+        goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]
+        pos_err = goal_pos - hand_pos[0]
+        reached = torch.norm(pos_err) < 0.025
 
-        threshold = 0.025
-        reached = torch.norm(pos_err) < threshold
-
-        # Gripper logic
-        if reached and self.ros_waypoint_idx[0] == len(self.waypoints) - 1:
+        if reached and self.ros_waypoint_idx[0] == len(self.waypoints)-1:
+            # final pose → gripping
             if gripper_mode == "auto" and self.real_timer < 2.0:
-                grip_acts = torch.ones((1, 2), device=self.device) * 0.02
+                grip_acts = torch.ones((1,2), device=self.device) * 0.02
                 self.real_timer += dt
                 self.weld_timer += dt
             else:
-                grip_acts = torch.ones((1, 2), device=self.device) * 0.04
+                grip_acts = torch.ones((1,2), device=self.device) * 0.04
         else:
-            grip_acts = torch.ones((1, 2), device=self.device) * 0.04
+            grip_acts = torch.ones((1,2), device=self.device) * 0.04
             if reached:
                 self.ros_waypoint_idx[0] += 1
+        self.ros_waypoint_idx.clamp_(max=len(self.waypoints)-1)
 
-        self.ros_waypoint_idx.clamp_(max=len(self.waypoints) - 1)
+        # 4) build look‑ahead trajectory
+        lookahead_traj = []
+        max_lookahead = 8
+        idx = self.ros_waypoint_idx[0].item()
+        # start from real joint reading
+        q_seed = self.q_real.clone()
 
-        # Re-fetch goal pose in case index changed
-        goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]
+        for step in range(max_lookahead):
+            i = idx + step
+            if i >= len(self.waypoints):
+                break
+            # compute local dpose
+            wp = self.waypoints[i][0]
+            pos_err = wp - hand_pos[0]
+            ori_err = orientation_error(goal_rot, hand_rot)[0]
+            dpos = torch.cat([
+                torch.clamp(pos_err, -0.015, 0.015),
+                torch.clamp(ori_err, -0.2, 0.2)
+            ]).unsqueeze(0).unsqueeze(-1)  # (1,6,1)
 
-        # Construct dpose
-        dpose = torch.cat([
-            torch.clamp(goal_pos - hand_pos[0], -0.015, 0.015),
-            torch.clamp(orientation_error(goal_rot, hand_rot)[0], -0.2, 0.2)
-        ]).unsqueeze(0).unsqueeze(-1)  # shape (1, 6, 1)
+            # package real dof buffer
+            dof_buf = self.sim.dof_pos.clone()
+            dof_buf[0, self.arm_idx, :self.arm_dof] = q_seed.unsqueeze(-1)
 
-        # Use real joint states for nullspace IK
-        dof_real = self.sim.dof_pos.clone()
-        dof_real[0, self.arm_idx, :self.arm_dof] = self.q_real.unsqueeze(-1)
+            # IK step
+            delta_q = control_ik_nullspace(
+                dpos, self.sim.j_eef3[:1], 1, dof_buf,
+                self.robot_mids, self.arm_idx, self.arm_dof
+            )[0]
 
-        delta_q = control_ik_nullspace(
-            dpose, self.sim.j_eef3[:1], 1, dof_real,
-            self.robot_mids, self.arm_idx, self.arm_dof
-        )
-        q_next = delta_q[0] + self.q_real
+            # next q
+            q_seed = tensor_clamp(
+                q_seed + delta_q,
+                self.sim.robot_lower_limits_tensor[:self.arm_dof],
+                self.sim.robot_upper_limits_tensor[:self.arm_dof]
+            )
+            lookahead_traj.append(q_seed.clone())
 
-        # Publish joint trajectory to real robot
+            # simulate ee motion forward for next iteration
+            hand_pos += quat_rotate(hand_rot, (wp - hand_pos[0]).unsqueeze(0))
+
+        # 5) publish the trajectory in one go
         traj = JointTrajectory()
-        traj.header = Header(stamp=rospy.Time.now())
+        traj.header.stamp = rospy.Time.now()
         traj.joint_names = self.joint_names
-        pt = JointTrajectoryPoint()
-        pt.positions = q_next.tolist()
-        step_distance = torch.norm(delta_q[0]).item()
-        pt.time_from_start = rospy.Duration(min(0.1, max(0.05, step_distance / 1.0)))
-        traj.points = [pt]
+
+        dt_step = 0.1  # 100 ms per waypoint
+        for k, qk in enumerate(lookahead_traj):
+            pt = JointTrajectoryPoint()
+            pt.positions = qk.tolist()
+            # optional: hint velocities
+            if k > 0:
+                vel = (lookahead_traj[k] - lookahead_traj[k-1]) / dt_step
+                pt.velocities = vel.tolist()
+            pt.time_from_start = rospy.Duration((k+1) * dt_step)
+            traj.points.append(pt)
+
         self.ros_pub.publish(traj)
 
+        # 6) compute q_next for return (first element) and bump timers
+        if lookahead_traj:
+            q_next = lookahead_traj[0]
+        else:
+            q_next = self.q_real
+
         return self.real_timer, q_next, grip_acts
+
+
+    # ---------- real robot stepwise control ----------
+    # def _real_weld_controller(self, goal_rot, dt, gripper_mode, plan_mode):
+    #     self._lookup_real_ee_pose()
+
+    #     hand_pos = self.ee_pos_real.unsqueeze(0)  # (1, 3)
+    #     hand_rot = self.ee_rot_real.unsqueeze(0)  # (1, 4)
+
+    #     # Early exit if we're already done
+    #     if self.ros_waypoint_idx[0] >= len(self.waypoints):
+    #         return
+
+    #     # Current target waypoint (only 1 env)
+    #     goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]  # (3,)
+    #     pos_err = goal_pos - hand_pos[0]  # (3,)
+
+    #     threshold = 0.025
+    #     reached = torch.norm(pos_err) < threshold
+
+    #     # Gripper logic
+    #     if reached and self.ros_waypoint_idx[0] == len(self.waypoints) - 1:
+    #         if gripper_mode == "auto" and self.real_timer < 2.0:
+    #             grip_acts = torch.ones((1, 2), device=self.device) * 0.02
+    #             self.real_timer += dt
+    #             self.weld_timer += dt
+    #         else:
+    #             grip_acts = torch.ones((1, 2), device=self.device) * 0.04
+    #     else:
+    #         grip_acts = torch.ones((1, 2), device=self.device) * 0.04
+    #         if reached:
+    #             self.ros_waypoint_idx[0] += 1
+
+    #     self.ros_waypoint_idx.clamp_(max=len(self.waypoints) - 1)
+
+    #     # Re-fetch goal pose in case index changed
+    #     goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]
+
+    #     # Construct dpose
+    #     dpose = torch.cat([
+    #         torch.clamp(goal_pos - hand_pos[0], -0.015, 0.015),
+    #         torch.clamp(orientation_error(goal_rot, hand_rot)[0], -0.2, 0.2)
+    #     ]).unsqueeze(0).unsqueeze(-1)  # shape (1, 6, 1)
+
+    #     # Use real joint states for nullspace IK
+    #     dof_real = self.sim.dof_pos.clone()
+    #     dof_real[0, self.arm_idx, :self.arm_dof] = self.q_real.unsqueeze(-1)
+
+    #     delta_q = control_ik_nullspace(
+    #         dpose, self.sim.j_eef3[:1], 1, dof_real,
+    #         self.robot_mids, self.arm_idx, self.arm_dof
+    #     )
+    #     q_next = delta_q[0] + self.q_real
+
+    #     # Publish joint trajectory to real robot
+    #     traj = JointTrajectory()
+    #     traj.header = Header(stamp=rospy.Time.now())
+    #     traj.joint_names = self.joint_names
+    #     pt = JointTrajectoryPoint()
+    #     pt.positions = q_next.tolist()
+    #     step_distance = torch.norm(delta_q[0]).item()
+    #     pt.time_from_start = rospy.Duration(min(0.1, max(0.05, step_distance / 1.0)))
+    #     traj.points = [pt]
+    #     self.ros_pub.publish(traj)
+
+    #     return self.real_timer, q_next, grip_acts
 
 
     # ---------- main step ----------
@@ -340,7 +357,7 @@ class ArmController3:
                 c_high= cube_center.squeeze(0)+torch.tensor([0.02,0.02,0.02], device=self.device)
                 obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
                 path=rrt_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.11)
-                dense=interpolate_waypoints(path,step=0.04)
+                dense=interpolate_waypoints(path,step=0.02)
                 self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
             else:
                 self.waypoints.append(goal)

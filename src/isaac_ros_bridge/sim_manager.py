@@ -352,13 +352,15 @@ class RobotCellSim:
         self.R_part_welding_pos = torch.zeros_like(self.R_part_welding_offset).to(device)
         # Predefined achor position for the big part to be in world frame.
         self.big_part_anchor = torch.tensor([0.0, -0.0, 0.75], device=device)
-        self.big_part_goal_quat = torch.tensor([[0.7071068, 0, 0, -0.7071068]] * self.num_envs).to(device)
+        self.big_part_goal_quat = quat_from_angle_axis(torch.tensor(math.pi/2), torch.tensor([-1.0, 0.0, 0.0])).unsqueeze(0).to(device)
+        self.big_part_goal_quat2 = quat_from_euler_xyz(torch.tensor(4.7124), torch.tensor(1.571), torch.tensor(0)).unsqueeze(0).to(device)
 
         self.spot_weld_nums = [7, 4]
 
         # q_gripper_to_part = inverse(q_hand_world) * q_part_world
         q_gripper_to_part = quat_mul(quat_conjugate(self.goal_rot_gripp1), big_part_rot)
         self.q_hand1_goal = quat_mul(self.big_part_goal_quat, quat_conjugate(q_gripper_to_part))
+        self.q_hand1_goal2 = quat_mul(self.big_part_goal_quat2, quat_conjugate(q_gripper_to_part))
 
         self.next_part = False
         self.fixed_L_part_offset_pos = None

@@ -23,6 +23,10 @@ class TaskPlanner():
         self.r2_task = None
         self.r3_task = None
 
+        # Number of parts and their spot weld numbers.
+        self.part1_weld_num = 7
+        self.part2_weld_num = 5
+
     def create_task_lib_r1(self):
         # Robot 1 sub-tasks
         big_part_grasp_pos = self.sim.big_part_pos.clone()
@@ -36,9 +40,16 @@ class TaskPlanner():
         hand1_mate_pos = self.sim.big_part_anchor + quat_rotate(self.sim.big_part_goal_quat, self.hand1_to_part_offset)
         hand1_mate_rot = self.sim.q_hand1_goal
         hand1_mate_pose = torch.cat([hand1_mate_pos, hand1_mate_rot], dim=1)
-        self.r1_mate = ['T_1_2', hand1_mate_pose, ['T_1_1'], ['END'], 'plan', 'close', False]
+        self.r1_mate = ['T_1_2', hand1_mate_pose, ['T_1_1'], [f"T_3_{2*self.part1_weld_num}"], 'plan', 'close', False]
         self.r1_task_queue.append(self.r1_mate)
         self.task_lib['T_1_2'] = self.r1_mate
+
+        # Hand 1 change orientation for part 2 welding.
+        hand1_mate_rot2 = self.sim.q_hand1_goal2
+        hand1_mate_pose2 = torch.cat([hand1_mate_pos, hand1_mate_rot2], dim=1)
+        self.r1_mate = ['T_1_3', hand1_mate_pose2, ['T_1_2'], ['END'], 'no-plan', 'close', False]
+        self.r1_task_queue.append(self.r1_mate)
+        self.task_lib['T_1_3'] = self.r1_mate
 
     def create_task_lib_r2(self):
         # Robot 2 sub-tasks

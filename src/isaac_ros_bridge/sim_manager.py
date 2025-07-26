@@ -284,6 +284,8 @@ class RobotCellSim:
 
         L_part_long_axis = torch.tensor([1.0, 0.0, 0.0], device=device)  # unit vector along Y of L part.
         L_part_corners = L_part_long_axis.repeat(self.num_envs, 1)  # (self.num_envs, 3)
+        R_part_long_axis = torch.tensor([0.0, 1.0, 0.0], device=device)  # unit vector along Y of L part.
+        R_part_corners = R_part_long_axis.repeat(self.num_envs, 1)  # (self.num_envs, 3)
 
         # downard axis
         self.down_dir = torch.Tensor([0, 0, -1]).to(device).view(1, 3)
@@ -333,6 +335,9 @@ class RobotCellSim:
         yaw_q_2 = box_grasping_yaw(L_part_rot, L_part_corners)
         self.goal_rot_gripp2 = quat_mul(yaw_q_2, down_q)
 
+        yaw_q_2_R = box_grasping_yaw(L_part_rot, R_part_corners)
+        self.goal_rot_gripp2_R = quat_mul(yaw_q_2_R, down_q)
+
         # L part pos offset for grasping only.
         self.part_grasp_offset = torch.stack(self.num_envs * [torch.tensor([0, 0, 0.025])]).to(device).view((self.num_envs, 3))
 
@@ -353,9 +358,9 @@ class RobotCellSim:
         # Predefined achor position for the big part to be in world frame.
         self.big_part_anchor = torch.tensor([0.0, -0.0, 0.75], device=device)
         self.big_part_goal_quat = quat_from_angle_axis(torch.tensor(math.pi/2), torch.tensor([-1.0, 0.0, 0.0])).unsqueeze(0).to(device)
-        self.big_part_goal_quat2 = quat_from_euler_xyz(torch.tensor(4.7124), torch.tensor(1.571), torch.tensor(0)).unsqueeze(0).to(device)
+        self.big_part_goal_quat2 = quat_from_euler_xyz(torch.tensor(4.7124), torch.tensor(math.pi), torch.tensor(0)).unsqueeze(0).to(device)
 
-        self.spot_weld_nums = [7, 4]
+        self.spot_weld_nums = [7, 5]
 
         # q_gripper_to_part = inverse(q_hand_world) * q_part_world
         q_gripper_to_part = quat_mul(quat_conjugate(self.goal_rot_gripp1), big_part_rot)
@@ -438,7 +443,7 @@ class RobotCellSim:
             self.big_part_welding_pos[:, i] = self.big_part_anchor + quat_rotate(self.big_part_goal_quat, self.big_L_welding_offset[:, i])
         
         for i in range(self.big_R_welding_offset.shape[1]):
-            self.big_part_welding_pos[:, i + self.spot_weld_nums[0]] = self.big_part_anchor + quat_rotate(self.big_part_goal_quat, self.big_R_welding_offset[:, i])
+            self.big_part_welding_pos[:, i + self.spot_weld_nums[0]] = self.big_part_anchor + quat_rotate(self.big_part_goal_quat2, self.big_R_welding_offset[:, i])
 
         # Setup L part spot weld positions in the world frame. 
         for i in range(self.L_part_welding_offset.shape[1]):

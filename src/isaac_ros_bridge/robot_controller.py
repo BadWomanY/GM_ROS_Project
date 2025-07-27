@@ -358,7 +358,7 @@ class ArmController3:
                 obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
                 path=rrt_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.11)
                 dense=interpolate_waypoints(path,step=0.02)
-                self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in dense]+[goal]
+                self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
             else:
                 self.waypoints.append(goal)
                 self.prev_task_goal=goal
@@ -377,8 +377,7 @@ class ArmController3:
         #     self.sim.j_eef3, self.sim.dof_pos, self.sim.sim_params.dt, self.sim.pos_action,
         #     self.robot_mids, self.arm_idx, self.sim.num_envs, self.arm_dof,
         #     self.weld_timer, gripper_mode)
-        # print(self.waypoint_idx, self.waypoints[self.waypoint_idx[0]], self.sim.hand3_pos)
-        # print(self.waypoint_idx, torch.norm(self.waypoints[self.waypoint_idx[0]] - self.sim.hand3_pos))
+
         self.real_timer, q_next, grip_act = self._real_weld_controller(goal_rot, self.sim.sim_params.dt, gripper_mode, plan_mode)
         arm3_action = torch.cat([q_next.unsqueeze(0), grip_act], dim=1).squeeze(0)
         self.sim.pos_action[:, self.arm_idx] = arm3_action

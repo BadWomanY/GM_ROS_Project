@@ -127,7 +127,7 @@ class RobotCellSim:
         self.default_dof_pos_3 = default_dof.copy()
         self.default_dof_pos_1[:self.robot_dof] = np.array([0, -0.0325, -1.5809, 0, -1.8860, -1.5678])
         self.default_dof_pos_2[:self.robot_dof] = np.array([0, -0.0325, -1.5809, 0, -1.8860, -1.5678])
-        self.default_dof_pos_3[:self.robot_dof] = self.robot_mids[:self.robot_dof]
+        self.default_dof_pos_3[:self.robot_dof] = np.array([-1.57, 0.0, 0.0, 0.0, 0.0, 0.0])
         # set grippers to open
         self.default_dof_pos_1[self.robot_dof:] = self.robot_upper_limits[self.robot_dof:]
         self.default_dof_pos_2[self.robot_dof:] = self.robot_upper_limits[self.robot_dof:]
@@ -367,10 +367,12 @@ class RobotCellSim:
         self.q_hand1_goal = quat_mul(self.big_part_goal_quat, quat_conjugate(q_gripper_to_part))
         self.q_hand1_goal2 = quat_mul(self.big_part_goal_quat2, quat_conjugate(q_gripper_to_part))
 
-        self.next_part = False
+        self.L_part = False
+        self.R_part = False
         self.fixed_L_part_offset_pos = None
         self.fixed_L_part_offset_rot = None
         self.l_part_attached = False
+        self.r_part_attached = False
 
         table_center = torch.zeros((self.num_envs, 3), device=device)
         table_center[:, 0] = self.table_poses[1].p.x
@@ -404,7 +406,7 @@ class RobotCellSim:
 
         base_pos3 = self.saved_root_tensor[0, self.arm_root_idxs[2], 0:3] 
         base_quat3 = self.saved_root_tensor[0, self.arm_root_idxs[2], 3:7]
-        print(base_pos3)
+
         N = reachable_pos.shape[0]
         base_pos_expand3 = base_pos3.unsqueeze(0).expand(N, 3)
         base_quat_expand3 = base_quat3.unsqueeze(0).expand(N, 4)
@@ -461,7 +463,7 @@ class RobotCellSim:
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_jacobian_tensors(self.sim)
         # fix L-part
-        if self.next_part and not self.l_part_attached:
+        if self.L_part and not self.l_part_attached:
             big_part_pos_now = self.root_state_tensor[:, self.big_part_root_idx, 0:3]
             big_part_rot_now = self.root_state_tensor[:, self.big_part_root_idx, 3:7]
             l_part_pos_now = self.root_state_tensor[:, self.L_part_root_idx, 0:3]
@@ -483,6 +485,38 @@ class RobotCellSim:
             self.root_state_tensor[:, self.L_part_root_idx, 3:7] = l_part_rot_target
             self.root_state_tensor[:, self.L_part_root_idx, 7:10] = 0.0
             self.root_state_tensor[:, self.L_part_root_idx, 10:13] = 0.0
+            self.root_state_tensor[:, self.arm_root_idxs[0]] = self.saved_root_tensor[:, self.arm_root_idxs[0]]
+            self.root_state_tensor[:, self.arm_root_idxs[1]] = self.saved_root_tensor[:, self.arm_root_idxs[1]]
+            self.root_state_tensor[:, self.arm_root_idxs[2]] = self.saved_root_tensor[:, self.arm_root_idxs[2]]
+
+            self.gym.set_actor_root_state_tensor(
+                self.sim,
+                gymtorch.unwrap_tensor(self.root_state_tensor)
+            )
+        
+        # fix R-part
+        if self.R_part and not self.r_part_attached:
+            big_part_pos_now = self.root_state_tensor[:, self.big_part_root_idx, 0:3]
+            big_part_rot_now = self.root_state_tensor[:, self.big_part_root_idx, 3:7]
+            r_part_pos_now = self.root_state_tensor[:, self.R_part_root_idx, 0:3]
+            r_part_rot_now = self.root_state_tensor[:, self.R_part_root_idx, 3:7]
+
+            self.fixed_R_part_offset_pos = quat_rotate(quat_conjugate(big_part_rot_now), r_part_pos_now - big_part_pos_now)
+            self.fixed_R_part_offset_rot = quat_mul(quat_conjugate(big_part_rot_now), r_part_rot_now)
+
+            self.r_part_attached = True
+
+        if self.r_part_attached:
+            big_part_pos_now = self.root_state_tensor[:, self.big_part_root_idx, 0:3]
+            big_part_rot_now = self.root_state_tensor[:, self.big_part_root_idx, 3:7]
+
+            r_part_pos_target = quat_rotate(big_part_rot_now, self.fixed_R_part_offset_pos) + big_part_pos_now
+            r_part_rot_target = quat_mul(big_part_rot_now, self.fixed_R_part_offset_rot)
+
+            self.root_state_tensor[:, self.R_part_root_idx, 0:3] = r_part_pos_target
+            self.root_state_tensor[:, self.R_part_root_idx, 3:7] = r_part_rot_target
+            self.root_state_tensor[:, self.R_part_root_idx, 7:10] = 0.0
+            self.root_state_tensor[:, self.R_part_root_idx, 10:13] = 0.0
             self.root_state_tensor[:, self.arm_root_idxs[0]] = self.saved_root_tensor[:, self.arm_root_idxs[0]]
             self.root_state_tensor[:, self.arm_root_idxs[1]] = self.saved_root_tensor[:, self.arm_root_idxs[1]]
             self.root_state_tensor[:, self.arm_root_idxs[2]] = self.saved_root_tensor[:, self.arm_root_idxs[2]]

@@ -95,7 +95,7 @@ class TaskPlanner():
         R_part_grasp_pos[:, 2] += self.sim.grasp_offset_arm2  # Grasping position.
         part_grasp_rot = self.sim.goal_rot_gripp2_R  # Grasping orientation in quat for small part grasping.
         R_part_grasp_pose = torch.cat([R_part_grasp_pos, part_grasp_rot], dim=1)
-        self.r2_L_grasp = ['T_2_4', R_part_grasp_pose, ['T_2_3', f'T_3_{2*self.part1_weld_num}'], [], 'no-plan', 'auto', False]
+        self.r2_L_grasp = ['T_2_4', R_part_grasp_pose, ['T_2_3'], [], 'no-plan', 'auto', False]
         self.r2_task_queue.append(self.r2_L_grasp)
         self.task_lib['T_2_4'] = self.r2_L_grasp
 
@@ -116,9 +116,17 @@ class TaskPlanner():
         self.R_part_goal_rot = quat_mul(hand2_mate_rot, quat_conjugate(self.hand2_to_part_rot_offset))
 
         hand2_mate_pose = torch.cat([hand2_mate_pos, hand2_mate_rot], dim=1)
-        self.r2_L_mate = ['T_2_5', hand2_mate_pose, ['T_2_4'], [], 'plan', 'close', False]
+        self.r2_L_mate = ['T_2_5', hand2_mate_pose, ['T_2_4', f'T_3_{2*self.part1_weld_num}'], [], 'plan', 'close', False]
         self.r2_task_queue.append(self.r2_L_mate)
         self.task_lib['T_2_5'] = self.r2_L_mate
+
+        # Robot 2 return home
+        home_pos = self.sim.init_pos[:, 1]
+        home_rot = self.sim.init_rot[:, 1]
+        home_pose = torch.cat([home_pos, home_rot], dim=1)
+        self.r2_return = ['T_2_6', home_pose, [f'T_3_{2*self.part1_weld_num + 1 + 4}'], [], 'no-plan', 'open', False]
+        self.r2_task_queue.append(self.r2_return)
+        self.task_lib['T_2_6'] = self.r2_return
     
     def create_task_lib_r3(self):
         # Robot 3 sub-tasks
@@ -158,8 +166,11 @@ class TaskPlanner():
             self.r3_task_queue.append(task)
         
         """Welding return home after part 1 welding."""
-        home_pos = self.sim.init_pos[:, 2]
-        home_rot = weld_rot
+        # home_pos = self.sim.init_pos[:, 2]
+        # home_rot = self.sim.init_rot[:, 2]
+        home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
+        home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
+        print(home_pos, home_rot)
         home_pose = torch.cat([home_pos, home_rot], dim=1)
         welding_task_num = len(self.r3_task_queue)
         self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
@@ -167,8 +178,48 @@ class TaskPlanner():
         self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
 
         """Part 2 welding tasks."""
-        #TODO
-    
+        weld_order_R = [0, 4, 2, 3]
+        hover_offset = 0.15
+
+        desired_z = quat_axis(self.L_part_goal_rot, 0)
+        reference_up = quat_axis(self.L_part_goal_rot, 2)
+        weld_top = look_at_quat(desired_z, reference_up)
+
+        for i, idx in enumerate(weld_order_R):
+            weld_rot = weld_top
+            weld_pos = self.sim.big_part_welding_pos[:, idx + 7, :].clone()
+            hover_weld_pos = weld_pos.clone()
+            
+            weld_pos[:, 2] += self.sim.grasp_offset_arm2
+            hover_weld_pos[:, 2] += hover_offset
+
+            hover_weld_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+            weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
+
+            task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"
+            depends_on = ["T_2_5"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i}"]
+            task = [task_name, hover_weld_pose, depends_on, [], 'plan', 'open', False]
+            self.task_lib[task_name] = task
+            self.r3_task_queue.append(task)
+            task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+2}"
+            depends_on = [f"T_3_{2*self.part1_weld_num + 2}"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"]
+            task = [task_name, weld_pose, depends_on, [], 'no-plan', 'auto', False]
+            self.task_lib[task_name] = task
+
+            self.r3_task_queue.append(task)
+        
+        """Welding return home after part 2 welding."""
+        # home_pos = self.sim.init_pos[:, 2]
+        # home_rot = self.sim.init_rot[:, 2]
+        home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
+        home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
+        print(home_pos, home_rot)
+        home_pose = torch.cat([home_pos, home_rot], dim=1)
+        welding_task_num = len(self.r3_task_queue)
+        self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
+        self.r3_task_queue.append(self.r3_return)
+        self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+
     def assignment_func(self, cur_arm_task:list, task_queue:deque, 
                         hand_pos:torch.Tensor, part_pos:torch.Tensor, timer=0, real_timer=0):
         if task_queue:
@@ -211,8 +262,8 @@ class TaskPlanner():
             reached = (hand_err < 0.012).squeeze()
             complete_dependency = cur_arm_task[3]
             if reached.item() and gripper_mode == "auto":
-                # self.task_lib[cur_arm_task[0]][-1] = True if timer >= 2.0 and real_timer >= 2.0 else False
-                self.task_lib[cur_arm_task[0]][-1] = True if timer >= 2.0 else False
+                self.task_lib[cur_arm_task[0]][-1] = True if timer >= 2.0 and real_timer >= 2.0 else False
+                # self.task_lib[cur_arm_task[0]][-1] = True if timer >= 2.0 else False
             
             if reached.item() and gripper_mode == "open":
                 self.task_lib[cur_arm_task[0]][-1] = True
@@ -228,7 +279,9 @@ class TaskPlanner():
             arm2_part_pos = self.sim.L_part_pos
         else:
             arm2_part_pos = self.sim.R_part_pos
-            self.sim.next_part = True
+            self.sim.L_part = True
+        if self.task_lib[f'T_3_{2*self.part1_weld_num + 1 + 4}'][-1]:
+            self.sim.R_part = True
         self.r2_task, self.r2_task_queue = self.assignment_func(self.r2_task, self.r2_task_queue, 
                                                                 self.sim.hand2_pos, arm2_part_pos)
         

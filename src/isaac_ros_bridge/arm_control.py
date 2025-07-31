@@ -87,7 +87,7 @@ def weld_controller(hand_pos, hand_rot, waypoints, goal_quat,
     ]).to(device)
 
     dist = torch.norm(hand_pos - current_targets, dim=-1)
-    reached = dist < 0.012
+    reached = dist < 0.03
 
     for i in range(num_envs):
         if reached[i] and waypoint_idx[i] == (len(waypoints) - 1):
@@ -98,7 +98,8 @@ def weld_controller(hand_pos, hand_rot, waypoints, goal_quat,
                 grip_acts = torch.ones((num_envs, 2), device=device) * 0.04
         else:
             grip_acts = torch.ones((num_envs, 2), device=device) * 0.04
-            waypoint_idx[i] += 1
+            if reached[i]:
+                waypoint_idx[i] += 1
 
     waypoint_idx = torch.clamp(waypoint_idx, max=len(waypoints) - 1)
 

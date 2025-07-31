@@ -1,7 +1,7 @@
 <launch>
   <!-- Declare all the args you want to make configurable -->
   <arg name="simulation" default="false" />
-  <arg name="ip" default="192.168.0.2" />
+  <arg name="ip" default="192.168.50.11" />
   <arg name="robot" default="RS007L" />
   <!-- Add others like debug, viewer, etc., if needed -->
 

@@ -1,7 +1,7 @@
 from isaacgym.torch_utils import *
 from isaac_ros_bridge.utils.franka_utils import *
 from isaac_ros_bridge.arm_control import simple_controller, weld_controller
-from isaac_ros_bridge.planner.motion_planner import rrt_plan
+from isaac_ros_bridge.planner.motion_planner import rrt_star_plan, rrt_plan
 from isaac_ros_bridge.models.spot_weld_offsets import L_part_offset, R_part_offset
 import torch
 
@@ -346,7 +346,8 @@ class ArmController3:
     def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
         if (not self.waypoints) or (self.task_name != task_name):
             self.waypoints.clear(); self.ros_waypoint_idx.zero_(); self.waypoint_idx.zero_(); self.task_name = task_name
-            start, goal = cur_pose[:, :3], goal_pose[:, :3]
+            self._lookup_real_ee_pose()
+            start, goal = self.ee_pos_real.unsqueeze(0), goal_pose[:, :3]
             if plan_mode == "plan":
                 if self.prev_task_goal is not None: 
                     start = self.prev_task_goal
@@ -356,7 +357,7 @@ class ArmController3:
                 c_low = cube_center.squeeze(0)-torch.tensor([0.02,0.02,0.02], device=self.device)
                 c_high= cube_center.squeeze(0)+torch.tensor([0.02,0.02,0.02], device=self.device)
                 obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
-                path=rrt_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.11)
+                path=rrt_star_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.1)
                 dense=interpolate_waypoints(path,step=0.02)
                 self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
             else:

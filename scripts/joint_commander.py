@@ -23,7 +23,8 @@ class RS007MoveItCommander:
 if __name__ == "__main__":
     controller = RS007MoveItCommander()
 
-    test_joint_target = [-1.57, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # test_joint_target = [-1.57, 0.0, 0.0, 0.0, 0.0, 0.0]
+    test_joint_target = [-1.5700, -0.1500, -0.9383, -0.1605, -2.1798, -1.3879]
     rospy.sleep(1.0)
     controller.go_to_joint_state(test_joint_target)
 

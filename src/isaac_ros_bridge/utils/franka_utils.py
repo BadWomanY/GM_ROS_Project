@@ -1,5 +1,4 @@
 from isaacgym.torch_utils import *
-from isaac_ros_bridge.planner.motion_planner import rrt_plan
 from IPython import embed
 
 def quat_axis(q, axis=0):
@@ -150,51 +149,3 @@ def part_mate_hand_pos(anchor, anchor_rot, hand_part_offset, part_offset, big_pa
     part2_align = anchor + quat_rotate(anchor_rot, part_offset + part_z_offset)
     hand2_align = part2_align + quat_rotate(part_goal_quat, hand_part_offset)
     return hand2_align, part_goal_quat
-
-def waypoint_generation(grasp_target, big_part_welding_pos, small_part_welding_pos, reachable, part_offset, obstacles, num_envs, device):
-    # big_part_anchor = torch.tensor([0.0, -0.0, 0.7], device=device)
-    # big_part_goal_quat = torch.tensor([[0.0, -0.707, 0.707, 0.0]] * num_envs).to(device)
-    big_part_anchor = torch.tensor([0.0, -0.0, 0.74], device=device)
-    big_part_goal_quat = torch.tensor([[0.7071068, 0, 0, -0.7071068]] * num_envs).to(device)
-    hand_2_part = torch.tensor([0, 0, 0.132], device=device).unsqueeze(0)
-
-    # Compute the desired mating orientation based on welding point cloud in world frame.
-    # Algorithm used: Kabsch Algorithm.
-    # big_part_welding_pos is predefined using the known anchor pos and quat.
-    # TODO: The shape need further work if a new part is added.
-    centroid_big = big_part_welding_pos.mean(dim=1)
-    centroid_small = small_part_welding_pos.mean(dim=1)
-
-    Q_big = big_part_welding_pos[0] - centroid_big
-    Q_part = small_part_welding_pos[0] - centroid_small
-
-    H = Q_part.T @ Q_big
-    U, S, Vt = torch.linalg.svd(H)
-    R = Vt.T @ U.T
-
-    if torch.det(R) < 0:
-        Vt[-1, :] *= -1
-        R = Vt.T @ U.T
-    
-    part_goal_quat = matrix_to_quaternion(R.unsqueeze(0))
-
-    big_part_thickness = small_part_thickness = 0.01
-    part_z_offset = torch.tensor([0, 0, -(big_part_thickness + small_part_thickness) / 2], device=device)
-    part2_align = big_part_anchor + quat_rotate(big_part_goal_quat, part_offset + part_z_offset)
-    hand2_align = part2_align + quat_rotate(part_goal_quat, hand_2_part)
-
-    start2 = grasp_target[0]
-    goal2 = hand2_align[0]
-
-    mid = elevated_midpoint(start2, goal2, z_offset=0.12)
-    path1a = rrt_plan(start2, mid, reachable, obstacles, device=device, step_size=0.07, goal_thresh=0.01, safety_radius=0.12)
-    path1b = rrt_plan(mid, goal2, reachable, obstacles, device=device, step_size=0.07, goal_thresh=0.01, safety_radius=0.12)
-    path1 = path1a + path1b[1:]
-    
-    # Remove the jerky actions of the arms.
-    dense_path = interpolate_waypoints(path1, step=0.01)
-    hand_waypoints = [pt.unsqueeze(0).repeat(num_envs, 1) for pt in dense_path]
-
-    hand_waypoints.append(hand2_align)
-    waypoint_idx = torch.zeros(num_envs, dtype=torch.long, device=device)
-    return waypoint_idx, hand_waypoints, part_goal_quat

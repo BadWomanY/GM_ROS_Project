@@ -81,6 +81,7 @@ if __name__ == "__main__":
             arm3_goal_pose = cur_task[2][1]
             gripper3_mode = cur_task[2][-2]
             arm3_plan = cur_task[2][-3]
+            sim.arm3_flag = False
             timer, real_timer = arm3_controller.step(arm3_task_name, arm3_pose, arm3_goal_pose, arm3_plan, gripper3_mode)
         sim.update_viewer()
     sim.cleanup()

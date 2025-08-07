@@ -5,6 +5,11 @@ from isaac_ros_bridge.utils.franka_utils import *
 from isaac_ros_bridge.models.spot_weld_offsets import *
 from IPython import embed
 
+"""Libraries for GTSP solving."""
+import numpy as np
+from scipy.spatial.distance import cdist
+from itertools import permutations
+
 class TaskPlanner():
     def __init__(self, sim):
         self.sim = sim
@@ -26,6 +31,59 @@ class TaskPlanner():
         # Number of parts and their spot weld numbers.
         self.part1_weld_num = 7
         self.part2_weld_num = 5
+
+        self.arm3_flag = False
+    
+    def compute_weld_quat_from_normal(self, normal: torch.Tensor, device):
+        normal = normal / torch.norm(normal, dim=-1, keepdim=True)
+        reference = torch.tensor([[0.0, 0.0, 1.0]], device=device)
+        ref_proj = reference - (reference @ normal.transpose(0, 1)) * normal
+        ref_proj = ref_proj / torch.norm(ref_proj, dim=-1, keepdim=True)
+        y_axis = torch.cross(normal, ref_proj, dim=-1)
+        x_axis = torch.cross(y_axis, normal, dim=-1)
+        rot_matrix = torch.stack([x_axis, y_axis, normal], dim=-2)
+        return matrix_to_quaternion(rot_matrix.unsqueeze(0)).to(device)
+
+    
+    def get_order_with_start(self, weld_positions, start_pose=None):
+        """
+        Simple TSP solver (brute force) to find optimal order of welds.
+        Args:
+            weld_positions: list of (1,3) torch tensors for each weld.
+            start_pose: (1,3) torch tensor for start/end-effector pose.
+        Returns:
+            List of indices (0..len(weld_positions)-1) representing optimal visiting order.
+        """
+        import numpy as np
+        from itertools import permutations
+        from scipy.spatial.distance import cdist
+
+        # Convert to numpy
+        weld_np = torch.cat(weld_positions, dim=0).cpu().numpy()
+        if start_pose is not None:
+            start_np = start_pose.cpu().numpy()
+            weld_np = np.vstack([start_np, weld_np])  # start at index 0
+
+        N = len(weld_positions)
+        cost_matrix = cdist(weld_np, weld_np)
+
+        nodes = list(range(1, N + 1)) if start_pose is not None else list(range(N))
+        best_path = None
+        min_cost = float("inf")
+
+        for perm in permutations(nodes):
+            total_cost = 0
+            if start_pose is not None:
+                total_cost += cost_matrix[0, perm[0]]
+            for i in range(len(perm) - 1):
+                total_cost += cost_matrix[perm[i], perm[i + 1]]
+            if total_cost < min_cost:
+                min_cost = total_cost
+                best_path = perm
+
+        return [i - 1 if start_pose is not None else i for i in best_path]
+
+
 
     def create_task_lib_r1(self):
         # Robot 1 sub-tasks
@@ -116,9 +174,9 @@ class TaskPlanner():
         self.R_part_goal_rot = quat_mul(hand2_mate_rot, quat_conjugate(self.hand2_to_part_rot_offset))
 
         hand2_mate_pose = torch.cat([hand2_mate_pos, hand2_mate_rot], dim=1)
-        self.r2_L_mate = ['T_2_5', hand2_mate_pose, ['T_2_4', f'T_3_{2*self.part1_weld_num}'], [], 'plan', 'close', False]
-        self.r2_task_queue.append(self.r2_L_mate)
-        self.task_lib['T_2_5'] = self.r2_L_mate
+        self.r2_R_mate = ['T_2_5', hand2_mate_pose, ['T_2_4', f'T_3_{2*self.part1_weld_num}'], [], 'plan', 'close', False]
+        self.r2_task_queue.append(self.r2_R_mate)
+        self.task_lib['T_2_5'] = self.r2_R_mate
 
         # Robot 2 return home
         home_pos = self.sim.init_pos[:, 1]
@@ -128,97 +186,244 @@ class TaskPlanner():
         self.r2_task_queue.append(self.r2_return)
         self.task_lib['T_2_6'] = self.r2_return
     
+    # def create_task_lib_r3(self):
+    #     # Robot 3 sub-tasks
+    #     """Part 1 welding tasks."""
+    #     weld_order = [0, 3, 1, 2, 4, 5, 6]
+    #     hover_offset = 0.15
+
+    #     desired_z = quat_axis(self.L_part_goal_rot, 0)
+    #     reference_up = quat_axis(self.L_part_goal_rot, 2)
+    #     weld_top = look_at_quat(desired_z, reference_up)
+
+    #     desired_z = quat_axis(self.L_part_goal_rot, 1)
+    #     weld_side = look_at_quat(desired_z, reference_up)
+    #     for i, idx in enumerate(weld_order):
+    #         weld_rot = weld_top if idx <= 3 else weld_side
+    #         weld_pos = self.sim.big_part_welding_pos[:, idx, :].clone()
+    #         hover_weld_pos = weld_pos.clone()
+    #         if idx <= 3:
+    #             weld_pos[:, 2] += self.sim.grasp_offset_arm2
+    #             hover_weld_pos[:, 2] += hover_offset
+    #         else:
+    #             weld_pos[:, 0] -= self.sim.grasp_offset_arm2
+    #             hover_weld_pos[:, 0] -= hover_offset
+    #         hover_weld_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+    #         weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
+
+    #         task_name = f"T_3_{2*i+1}"
+    #         depends_on = [] if i == 0 else [f"T_3_{2*i}"]
+    #         task = [task_name, hover_weld_pose, depends_on, [], 'plan', 'open', False]
+    #         self.task_lib[task_name] = task
+    #         self.r3_task_queue.append(task)
+    #         task_name = f"T_3_{2*i+2}"
+    #         depends_on = ['T_3_1'] if i == 0 else [f"T_3_{2*i+1}"]
+    #         task = [task_name, weld_pose, depends_on, [], 'no-plan', 'auto', False]
+    #         self.task_lib[task_name] = task
+
+    #         self.r3_task_queue.append(task)
+        
+    #     """Welding return home after part 1 welding."""
+    #     # home_pos = self.sim.init_pos[:, 2]
+    #     # home_rot = self.sim.init_rot[:, 2]
+    #     home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
+    #     home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
+    #     print(home_pos, home_rot)
+    #     home_pose = torch.cat([home_pos, home_rot], dim=1)
+    #     welding_task_num = len(self.r3_task_queue)
+    #     self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
+    #     self.r3_task_queue.append(self.r3_return)
+    #     self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+
+    #     """Part 2 welding tasks."""
+    #     weld_order_R = [0, 4, 2, 3]
+    #     hover_offset = 0.15
+
+    #     desired_z = quat_axis(self.L_part_goal_rot, 0)
+    #     reference_up = quat_axis(self.L_part_goal_rot, 2)
+    #     weld_top = look_at_quat(desired_z, reference_up)
+
+    #     for i, idx in enumerate(weld_order_R):
+    #         weld_rot = weld_top
+    #         weld_pos = self.sim.big_part_welding_pos[:, idx + 7, :].clone()
+    #         hover_weld_pos = weld_pos.clone()
+            
+    #         weld_pos[:, 2] += self.sim.grasp_offset_arm2
+    #         hover_weld_pos[:, 2] += hover_offset
+
+    #         hover_weld_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+    #         weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
+
+    #         task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"
+    #         depends_on = ["T_2_5"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i}"]
+    #         task = [task_name, hover_weld_pose, depends_on, [], 'plan', 'open', False]
+    #         self.task_lib[task_name] = task
+    #         self.r3_task_queue.append(task)
+    #         task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+2}"
+    #         depends_on = [f"T_3_{2*self.part1_weld_num + 2}"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"]
+    #         task = [task_name, weld_pose, depends_on, [], 'no-plan', 'auto', False]
+    #         self.task_lib[task_name] = task
+
+    #         self.r3_task_queue.append(task)
+        
+    #     """Welding return home after part 2 welding."""
+    #     # home_pos = self.sim.init_pos[:, 2]
+    #     # home_rot = self.sim.init_rot[:, 2]
+    #     home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
+    #     home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
+    #     print(home_pos, home_rot)
+    #     home_pose = torch.cat([home_pos, home_rot], dim=1)
+    #     welding_task_num = len(self.r3_task_queue)
+    #     self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
+    #     self.r3_task_queue.append(self.r3_return)
+    #     self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+
     def create_task_lib_r3(self):
-        # Robot 3 sub-tasks
-        """Part 1 welding tasks."""
-        weld_order = [0, 3, 1, 2, 4, 5, 6]
         hover_offset = 0.15
+        grasp_offset = self.sim.grasp_offset_arm2  # use the actual value from sim
 
-        desired_z = quat_axis(self.L_part_goal_rot, 0)
-        reference_up = quat_axis(self.L_part_goal_rot, 2)
-        weld_top = look_at_quat(desired_z, reference_up)
+        # === Orientation setup from user logic ===
+        desired_z_top = quat_axis(self.L_part_goal_rot, 0)   # X-axis in world frame
+        reference_up = quat_axis(self.L_part_goal_rot, 2)    # Z-axis up
+        weld_top = look_at_quat(desired_z_top, reference_up)
 
-        desired_z = quat_axis(self.L_part_goal_rot, 1)
-        weld_side = look_at_quat(desired_z, reference_up)
-        for i, idx in enumerate(weld_order):
-            weld_rot = weld_top if idx <= 3 else weld_side
-            weld_pos = self.sim.big_part_welding_pos[:, idx, :].clone()
+        desired_z_side = quat_axis(self.L_part_goal_rot, 1)  # Y-axis
+        weld_side = look_at_quat(desired_z_side, reference_up)
+
+        # === Part 1 weld IDs ===
+        pre_ids = [0, 3]
+        post_ids = [1, 2, 4, 5, 6]
+        pre_positions = [self.sim.big_part_welding_pos[:, i, :] for i in pre_ids]
+        post_positions = [self.sim.big_part_welding_pos[:, i, :] for i in post_ids]
+        start_pose = self.sim.init_pos[:, 2]
+
+        pre_order = self.get_order_with_start(pre_positions, start_pose=start_pose)
+        task_count = 0
+        # === Pre-weld tasks (Part 1) ===
+        for local_idx in pre_order:
+            weld_idx = pre_ids[local_idx]
+            weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
+            weld_rot = weld_top if weld_idx <= 3 else weld_side
+
             hover_weld_pos = weld_pos.clone()
-            if idx <= 3:
-                weld_pos[:, 2] += self.sim.grasp_offset_arm2
+            if weld_idx <= 3:
+                weld_pos[:, 2] += grasp_offset
                 hover_weld_pos[:, 2] += hover_offset
             else:
-                weld_pos[:, 0] -= self.sim.grasp_offset_arm2
+                weld_pos[:, 0] -= grasp_offset
                 hover_weld_pos[:, 0] -= hover_offset
-            hover_weld_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+
+            hover_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
             weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
 
-            task_name = f"T_3_{2*i+1}"
-            depends_on = [] if i == 0 else [f"T_3_{2*i}"]
-            task = [task_name, hover_weld_pose, depends_on, [], 'plan', 'open', False]
-            self.task_lib[task_name] = task
-            self.r3_task_queue.append(task)
-            task_name = f"T_3_{2*i+2}"
-            depends_on = ['T_3_1'] if i == 0 else [f"T_3_{2*i+1}"]
-            task = [task_name, weld_pose, depends_on, [], 'no-plan', 'auto', False]
-            self.task_lib[task_name] = task
+            hover_name = f"T_3_{task_count+1}"
+            weld_name = f"T_3_{task_count+2}"
+            self.r3_task_queue.append([hover_name, hover_pose, [], [], 'plan', 'open', False])
+            self.r3_task_queue.append([weld_name, weld_pose, [hover_name], [], 'no-plan', 'auto', False])
+            self.task_lib[hover_name] = self.r3_task_queue[-2]
+            self.task_lib[weld_name] = self.r3_task_queue[-1]
+            task_count += 2
+            last_pose = weld_pos
 
-            self.r3_task_queue.append(task)
-        
-        """Welding return home after part 1 welding."""
-        # home_pos = self.sim.init_pos[:, 2]
-        # home_rot = self.sim.init_rot[:, 2]
-        home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
-        home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
-        print(home_pos, home_rot)
-        home_pose = torch.cat([home_pos, home_rot], dim=1)
-        welding_task_num = len(self.r3_task_queue)
-        self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
-        self.r3_task_queue.append(self.r3_return)
-        self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+        # === Post-weld tasks (Part 1) ===
+        post_order = self.get_order_with_start(post_positions, start_pose=last_pose)
+        for local_idx in post_order:
+            weld_idx = post_ids[local_idx]
+            weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
+            weld_rot = weld_top if weld_idx <= 3 else weld_side
 
-        """Part 2 welding tasks."""
-        weld_order_R = [0, 4, 2, 3]
-        hover_offset = 0.15
-
-        desired_z = quat_axis(self.L_part_goal_rot, 0)
-        reference_up = quat_axis(self.L_part_goal_rot, 2)
-        weld_top = look_at_quat(desired_z, reference_up)
-
-        for i, idx in enumerate(weld_order_R):
-            weld_rot = weld_top
-            weld_pos = self.sim.big_part_welding_pos[:, idx + 7, :].clone()
             hover_weld_pos = weld_pos.clone()
-            
-            weld_pos[:, 2] += self.sim.grasp_offset_arm2
+            if weld_idx <= 3:
+                weld_pos[:, 2] += grasp_offset
+                hover_weld_pos[:, 2] += hover_offset
+            else:
+                weld_pos[:, 0] -= grasp_offset
+                hover_weld_pos[:, 0] -= hover_offset
+
+            hover_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+            weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
+
+            hover_name = f"T_3_{task_count+1}"
+            weld_name = f"T_3_{task_count+2}"
+            self.r3_task_queue.append([hover_name, hover_pose, [f"T_3_{task_count}"], [], 'plan', 'open', False])
+            self.r3_task_queue.append([weld_name, weld_pose, [hover_name], [], 'no-plan', 'auto', False])
+            self.task_lib[hover_name] = self.r3_task_queue[-2]
+            self.task_lib[weld_name] = self.r3_task_queue[-1]
+            task_count += 2
+        
+        # === Return home task ===
+        home_pos = torch.tensor([[-0.169, -0.011, 1.169]], device=self.device)
+        home_rot = torch.tensor([[-0.984, 0.144, -0.091, -0.054]], device=self.device)
+        home_pose = torch.cat([home_pos, home_rot], dim=1)
+        home_task = [f"T_3_{task_count+1}", home_pose, [f"T_3_{task_count}"], [], 'no-plan', 'open', False]
+        self.r3_task_queue.append(home_task)
+        self.task_lib[f"T_3_{task_count+1}"] = home_task
+        task_count += 1
+        last_pose = home_pos
+
+        # === Part 2 weld IDs ===
+        pre_ids_R = [7, 11]
+        post_ids_R = [9, 10]
+        pre_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in pre_ids_R]
+        post_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in post_ids_R]
+
+        pre_order_R = self.get_order_with_start(pre_positions_R, start_pose=last_pose)
+
+        # === Pre-weld tasks (Part 2) ===
+        for local_idx in pre_order_R:
+            weld_idx = pre_ids_R[local_idx]
+            weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
+            weld_rot = weld_top
+
+            hover_weld_pos = weld_pos.clone()
+            weld_pos[:, 2] += grasp_offset
             hover_weld_pos[:, 2] += hover_offset
 
-            hover_weld_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+            hover_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
             weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
 
-            task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"
-            depends_on = ["T_2_5"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i}"]
-            task = [task_name, hover_weld_pose, depends_on, [], 'plan', 'open', False]
-            self.task_lib[task_name] = task
-            self.r3_task_queue.append(task)
-            task_name = f"T_3_{2*self.part1_weld_num + 1 + 2*i+2}"
-            depends_on = [f"T_3_{2*self.part1_weld_num + 2}"] if i == 0 else [f"T_3_{2*self.part1_weld_num + 1 + 2*i+1}"]
-            task = [task_name, weld_pose, depends_on, [], 'no-plan', 'auto', False]
-            self.task_lib[task_name] = task
+            hover_name = f"T_3_{task_count+1}"
+            weld_name = f"T_3_{task_count+2}"
+            self.r3_task_queue.append([hover_name, hover_pose, [f"T_3_{task_count}", "T_2_5"], [], 'plan', 'open', False])
+            self.r3_task_queue.append([weld_name, weld_pose, [hover_name], [], 'no-plan', 'auto', False])
+            self.task_lib[hover_name] = self.r3_task_queue[-2]
+            self.task_lib[weld_name] = self.r3_task_queue[-1]
+            task_count += 2
+            last_pose = weld_pos
 
-            self.r3_task_queue.append(task)
-        
-        """Welding return home after part 2 welding."""
-        # home_pos = self.sim.init_pos[:, 2]
-        # home_rot = self.sim.init_rot[:, 2]
-        home_pos = torch.tensor([[-0.169,  -0.011,  1.169]], device='cuda:0')
-        home_rot = torch.tensor([[-0.984, 0.144, -0.091,  -0.054]], device='cuda:0')
-        print(home_pos, home_rot)
+        # === Post-weld tasks (Part 2) ===
+        post_order_R = self.get_order_with_start(post_positions_R, start_pose=last_pose)
+        for local_idx in post_order_R:
+            weld_idx = post_ids_R[local_idx]
+            weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
+            weld_rot = weld_top
+
+            hover_weld_pos = weld_pos.clone()
+            weld_pos[:, 2] += grasp_offset
+            hover_weld_pos[:, 2] += hover_offset
+
+            hover_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
+            weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
+
+            hover_name = f"T_3_{task_count+1}"
+            weld_name = f"T_3_{task_count+2}"
+            self.r3_task_queue.append([hover_name, hover_pose, [f"T_3_{task_count}"], [], 'plan', 'open', False])
+            self.r3_task_queue.append([weld_name, weld_pose, [hover_name], [], 'no-plan', 'auto', False])
+            self.task_lib[hover_name] = self.r3_task_queue[-2]
+            self.task_lib[weld_name] = self.r3_task_queue[-1]
+            task_count += 2
+            last_pose = weld_pos
+
+        # === Return home task ===
+        home_pos = torch.tensor([[-0.169, -0.011, 1.169]], device=self.device)
+        home_rot = torch.tensor([[-0.984, 0.144, -0.091, -0.054]], device=self.device)
         home_pose = torch.cat([home_pos, home_rot], dim=1)
-        welding_task_num = len(self.r3_task_queue)
-        self.r3_return = [f'T_3_{welding_task_num + 1}', home_pose, [f'T_3_{welding_task_num}'], [], 'no-plan', 'open', False]
-        self.r3_task_queue.append(self.r3_return)
-        self.task_lib[f'T_3_{welding_task_num + 1}'] = self.r3_return
+        home_task = [f"T_3_{task_count+1}", home_pose, [f"T_3_{task_count}"], [], 'no-plan', 'open', False]
+        self.r3_task_queue.append(home_task)
+        self.task_lib[f"T_3_{task_count+1}"] = home_task
+
+
+
 
     def assignment_func(self, cur_arm_task:list, task_queue:deque, 
                         hand_pos:torch.Tensor, part_pos:torch.Tensor, timer=0, real_timer=0):
@@ -234,6 +439,8 @@ class TaskPlanner():
                         task_status.append(self.task_lib[task_name][-1])
                     if len(task_status) == sum(task_status):
                         cur_arm_task = task_queue.popleft()
+                    else:
+                        return cur_arm_task, task_queue
             
         # else:
         gripper_mode = cur_arm_task[-2]
@@ -284,9 +491,12 @@ class TaskPlanner():
             self.sim.R_part = True
         self.r2_task, self.r2_task_queue = self.assignment_func(self.r2_task, self.r2_task_queue, 
                                                                 self.sim.hand2_pos, arm2_part_pos)
-        
-        L_big_dist = torch.norm(self.sim.big_part_pos - self.sim.L_part_pos, dim=-1).unsqueeze(-1)
-        if torch.sum(L_big_dist < 0.18).item() == self.sim.num_envs:
+
+        L_hand_mate = self.r2_L_mate[1][:, :3]
+        mate_err = torch.norm(L_hand_mate - self.sim.hand2_pos, dim=-1)
+        if torch.sum(mate_err < 0.01).item() == self.sim.num_envs:
+            self.arm3_flag = True
+        if self.arm3_flag:
             self.r3_task, self.r3_task_queue = self.assignment_func(self.r3_task, self.r3_task_queue,
                                                                     self.sim.hand3_pos, arm2_part_pos, timer, real_timer)
         self.cur_task = [self.r1_task, self.r2_task, self.r3_task]

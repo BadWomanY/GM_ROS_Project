@@ -127,7 +127,7 @@ class RobotCellSim:
         self.default_dof_pos_3 = default_dof.copy()
         self.default_dof_pos_1[:self.robot_dof] = np.array([0, -0.0325, -1.5809, 0, -1.8860, -1.5678])
         self.default_dof_pos_2[:self.robot_dof] = np.array([0, -0.0325, -1.5809, 0, -1.8860, -1.5678])
-        self.default_dof_pos_3[:self.robot_dof] = np.array([-1.5700, -0.1500, -0.9383, -0.1605, -2.1798, -1.3879])
+        self.default_dof_pos_3[:self.robot_dof] = np.array([-1.5700, -0.1500, -0.9383, -0.1605, -1.57, -1.3879])
         # set grippers to open
         self.default_dof_pos_1[self.robot_dof:] = self.robot_upper_limits[self.robot_dof:]
         self.default_dof_pos_2[self.robot_dof:] = self.robot_upper_limits[self.robot_dof:]
@@ -555,7 +555,7 @@ class RobotCellSim:
         
         # Hardcode the initial joint 1 pos of the welding robot to 90 degrees so it faces the working environment.
         if self.arm3_flag:
-            self.pos_action[:, 2, :self.robot_dof] = torch.tensor([-1.5700, -0.1500, -0.9383, -0.1605, -2.1798, -1.3879], device=self.device)
+            self.pos_action[:, 2, :self.robot_dof] = torch.tensor([-1.5700, -0.1500, -0.9383, -0.1605, -1.57, -1.3879], device=self.device)
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.pos_action))
 
         for evt in self.gym.query_viewer_action_events(self.viewer):

@@ -352,8 +352,8 @@ class TaskPlanner():
             task_count += 2
         
         # === Return home task ===
-        home_pos = torch.tensor([[-0.169, -0.011, 1.169]], device=self.device)
-        home_rot = torch.tensor([[-0.984, 0.144, -0.091, -0.054]], device=self.device)
+        home_pos = torch.tensor([[-0.12681742, -0.01299958, 1.19022809]], device=self.device)
+        home_rot = torch.tensor([[ 0.91465718, -0.11491458, 0.38563732, 0.0384803 ]], device=self.device)
         home_pose = torch.cat([home_pos, home_rot], dim=1)
         home_task = [f"T_3_{task_count+1}", home_pose, [f"T_3_{task_count}"], [], 'no-plan', 'open', False]
         self.r3_task_queue.append(home_task)
@@ -416,7 +416,7 @@ class TaskPlanner():
 
         # === Return home task ===
         home_pos = torch.tensor([[-0.169, -0.011, 1.169]], device=self.device)
-        home_rot = torch.tensor([[-0.984, 0.144, -0.091, -0.054]], device=self.device)
+        home_rot = torch.tensor([[ 0.91465718, -0.11491458, 0.38563732, 0.0384803 ]], device=self.device)
         home_pose = torch.cat([home_pos, home_rot], dim=1)
         home_task = [f"T_3_{task_count+1}", home_pose, [f"T_3_{task_count}"], [], 'no-plan', 'open', False]
         self.r3_task_queue.append(home_task)

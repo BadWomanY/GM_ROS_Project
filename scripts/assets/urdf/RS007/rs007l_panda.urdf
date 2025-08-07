@@ -6,7 +6,7 @@
   <link name="base_link">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J0.stl"/>
+        <mesh filename="meshes/RS007L_J0.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -15,7 +15,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J0.stl"/>
+        <mesh filename="meshes/RS007L_J0.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -28,7 +28,7 @@
   <link name="link1">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J1.stl"/>
+        <mesh filename="meshes/RS007L_J1.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -37,7 +37,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J1.stl"/>
+        <mesh filename="meshes/RS007L_J1.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -50,7 +50,7 @@
   <link name="link2">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J2.stl"/>
+        <mesh filename="meshes/RS007L_J2.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -59,7 +59,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J2.stl"/>
+        <mesh filename="meshes/RS007L_J2.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -72,7 +72,7 @@
   <link name="link3">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J3.stl"/>
+        <mesh filename="meshes/RS007L_J3.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -81,7 +81,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J3.stl"/>
+        <mesh filename="meshes/RS007L_J3.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -94,7 +94,7 @@
   <link name="link4">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J4.stl"/>
+        <mesh filename="meshes/RS007L_J4.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -103,7 +103,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J4.stl"/>
+        <mesh filename="meshes/RS007L_J4.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -116,7 +116,7 @@
   <link name="link5">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J5.stl"/>
+        <mesh filename="meshes/RS007L_J5.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -125,7 +125,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J5.stl"/>
+        <mesh filename="meshes/RS007L_J5.stl"/>
       </geometry>
       <material name="White">
         <color rgba="1 1 1 1"/>
@@ -138,7 +138,7 @@
   <link name="link6">
     <visual>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J6.stl"/>
+        <mesh filename="meshes/RS007L_J6.stl"/>
       </geometry>
       <material name="Black">
         <color rgba="0 0 0 1"/>
@@ -147,7 +147,7 @@
     </visual>
     <collision>
       <geometry>
-        <mesh filename="RS007/meshes/RS007L_J6.stl"/>
+        <mesh filename="meshes/RS007L_J6.stl"/>
       </geometry>
       <material name="Black">
         <color rgba="0 0 0 1"/>
@@ -218,12 +218,12 @@
   <link name="panda_hand">
     <visual>
       <geometry>
-        <mesh filename="package://franka_description/meshes/visual/hand.dae"/>
+        <mesh filename="../franka_description/meshes/visual/hand.dae"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://franka_description/meshes/collision/hand.obj"/>
+        <mesh filename="../franka_description/meshes/collision/hand.obj"/>
       </geometry>
     </collision>
   </link>
@@ -231,12 +231,12 @@
   <link name="panda_leftfinger">
     <visual>
       <geometry>
-        <mesh filename="package://franka_description/meshes/visual/finger.dae"/>
+        <mesh filename="../franka_description/meshes/visual/finger.dae"/>
       </geometry>
     </visual>
     <collision>
       <geometry>
-        <mesh filename="package://franka_description/meshes/collision/finger.obj"/>
+        <mesh filename="../franka_description/meshes/collision/finger.obj"/>
       </geometry>
     </collision>
   </link>
@@ -244,13 +244,13 @@
     <visual>
       <origin rpy="0 0 3.14159265359" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://franka_description/meshes/visual/finger.dae"/>
+        <mesh filename="../franka_description/meshes/visual/finger.dae"/>
       </geometry>
     </visual>
     <collision>
       <origin rpy="0 0 3.14159265359" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://franka_description/meshes/collision/finger.obj"/>
+        <mesh filename="../franka_description/meshes/collision/finger.obj"/>
       </geometry>
     </collision>
   </link>

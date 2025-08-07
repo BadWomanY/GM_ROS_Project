@@ -142,6 +142,7 @@ class ArmController3:
         # ---------- ROS comms ----------
         self.joint_names = [f"joint{i+1}" for i in range(self.arm_dof)]
         self.ros_pub = rospy.Publisher("/rs007l_arm_controller/command", JointTrajectory, queue_size=1)
+        self.tool_pub = rospy.Publisher("franka_gripper_controller/command", JointTrajectory, queue_size=1)
         self.listener = tf.TransformListener()
 
         # live buffers for real robot state

@@ -11,20 +11,24 @@ class RS007MoveItCommander:
 
         self.robot = moveit_commander.RobotCommander()
         self.scene = moveit_commander.PlanningSceneInterface()
-        self.group = moveit_commander.MoveGroupCommander("manipulator")
-        self.group.set_max_velocity_scaling_factor(0.1)
-        self.group.set_max_acceleration_scaling_factor(0.1)
+        self.robot = moveit_commander.MoveGroupCommander("manipulator")
+        self.robot.set_max_velocity_scaling_factor(0.1)
+        self.robot.set_max_acceleration_scaling_factor(0.1)
+        self.tool = moveit_commander.MoveGroupCommander("tool")
+        print(self.tool.get_active_joints())
 
     def go_to_joint_state(self, target):
-        self.group.go(target, wait=True)
-        self.group.stop()
+        self.robot.go(target[:6], wait=True)
+        self.tool.go(target[6:], wait=True)
+        self.robot.stop()
 
 
 if __name__ == "__main__":
     controller = RS007MoveItCommander()
 
     # test_joint_target = [-1.57, 0.0, 0.0, 0.0, 0.0, 0.0]
-    test_joint_target = [-1.5700, -0.1500, -0.9383, -0.1605, -2.1798, -1.3879]
+    # test_joint_target = [-1.5700, -0.1500, -0.9383, -0.1605, -2.1798, -1.3879]
+    test_joint_target = [-1.5700, -0.1500, -0.9383, -0.1605, -1.57, -1.3879, 0.04, 0.04]  # Adjusted for RS007L with gripper
     rospy.sleep(1.0)
     controller.go_to_joint_state(test_joint_target)
 

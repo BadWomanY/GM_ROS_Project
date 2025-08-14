@@ -433,6 +433,8 @@ class RobotCellSim:
         self.hand3_pos = hand_poses[:, 2]
         self.hand3_rot = hand_rots[:, 2]
 
+        self.weld_tip_pos = self.rb_states[37, :3]
+
         # how far the hand should be from box for grasping
         self.grasp_offset = 0.11
         self.grasp_offset_arm2 = 0.1

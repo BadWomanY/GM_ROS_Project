@@ -25,6 +25,14 @@
   />
 
   <node
+    name="moveit_planner_server"
+    pkg="isaac_ros_bridge"
+    type="moveit_planner_server.py"
+    output="screen"
+    cwd="node"
+  />
+
+  <node
     name="isaac_gym_sim"
     pkg="isaac_ros_bridge"
     type="gym_test.py"

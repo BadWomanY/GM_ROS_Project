@@ -3,6 +3,8 @@ from isaac_ros_bridge.utils.franka_utils import *
 from isaac_ros_bridge.arm_control import simple_controller, weld_controller
 from isaac_ros_bridge.planner.motion_planner import rrt_star_plan, rrt_plan
 from isaac_ros_bridge.models.spot_weld_offsets import L_part_offset, R_part_offset
+from geometry_msgs.msg import PoseStamped
+from isaac_ros_bridge.srv import PlanPose
 import torch
 
 # === MoveIt IK Interface ===
@@ -11,6 +13,7 @@ from std_msgs.msg import Header
 import rospy
 import tf
 from sensor_msgs.msg import JointState
+from std_srvs.srv import Trigger
 
 class ArmController1:
     def __init__(self, sim, task_lib, arm_idx=0):
@@ -138,6 +141,8 @@ class ArmController3:
         self.weld_timer = 0.0
         self.real_timer = 0.0
         self.waypoint_mode = []
+        self.plan_srv = None
+        self.traj = None
 
         # ---------- ROS comms ----------
         self.joint_names = [f"joint{i+1}" for i in range(self.arm_dof)]
@@ -174,6 +179,13 @@ class ArmController3:
             pass
 
     # ---------- util ----------
+    def pose_transform(self, pos, quat):
+        sim_rot = torch.tensor([0.0, 0.0, -1.0, 0.0], device=self.device)  # 180° Z rot
+        sim_trans = torch.tensor([0.45, 0.0, -0.1], device=self.device)
+        pos_transformed = quat_rotate(sim_rot.unsqueeze(0), (pos + sim_trans).unsqueeze(0)).squeeze(0)
+        rot_transformed = quat_mul(quat_conjugate(sim_rot.unsqueeze(0)), quat.unsqueeze(0)).squeeze(0)
+        return pos_transformed, rot_transformed
+
     def _obb_from_pose(self, center, quat, half_extents):
         signs = torch.tensor([[ -1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]], device=center.device)
         corners_local = signs * half_extents.unsqueeze(0)
@@ -276,111 +288,236 @@ class ArmController3:
 
         return self.real_timer, q_next, grip_acts
 
-
-    # ---------- real robot stepwise control ----------
-    # def _real_weld_controller(self, goal_rot, dt, gripper_mode, plan_mode):
-    #     self._lookup_real_ee_pose()
-
-    #     hand_pos = self.ee_pos_real.unsqueeze(0)  # (1, 3)
-    #     hand_rot = self.ee_rot_real.unsqueeze(0)  # (1, 4)
-
-    #     # Early exit if we're already done
-    #     if self.ros_waypoint_idx[0] >= len(self.waypoints):
-    #         return
-
-    #     # Current target waypoint (only 1 env)
-    #     goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]  # (3,)
-    #     pos_err = goal_pos - hand_pos[0]  # (3,)
-
-    #     threshold = 0.025
-    #     reached = torch.norm(pos_err) < threshold
-
-    #     # Gripper logic
-    #     if reached and self.ros_waypoint_idx[0] == len(self.waypoints) - 1:
-    #         if gripper_mode == "auto" and self.real_timer < 2.0:
-    #             grip_acts = torch.ones((1, 2), device=self.device) * 0.02
-    #             self.real_timer += dt
-    #             self.weld_timer += dt
-    #         else:
-    #             grip_acts = torch.ones((1, 2), device=self.device) * 0.04
-    #     else:
-    #         grip_acts = torch.ones((1, 2), device=self.device) * 0.04
-    #         if reached:
-    #             self.ros_waypoint_idx[0] += 1
-
-    #     self.ros_waypoint_idx.clamp_(max=len(self.waypoints) - 1)
-
-    #     # Re-fetch goal pose in case index changed
-    #     goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]
-
-    #     # Construct dpose
-    #     dpose = torch.cat([
-    #         torch.clamp(goal_pos - hand_pos[0], -0.015, 0.015),
-    #         torch.clamp(orientation_error(goal_rot, hand_rot)[0], -0.2, 0.2)
-    #     ]).unsqueeze(0).unsqueeze(-1)  # shape (1, 6, 1)
-
-    #     # Use real joint states for nullspace IK
-    #     dof_real = self.sim.dof_pos.clone()
-    #     dof_real[0, self.arm_idx, :self.arm_dof] = self.q_real.unsqueeze(-1)
-
-    #     delta_q = control_ik_nullspace(
-    #         dpose, self.sim.j_eef3[:1], 1, dof_real,
-    #         self.robot_mids, self.arm_idx, self.arm_dof
-    #     )
-    #     q_next = delta_q[0] + self.q_real
-
-    #     # Publish joint trajectory to real robot
-    #     traj = JointTrajectory()
-    #     traj.header = Header(stamp=rospy.Time.now())
-    #     traj.joint_names = self.joint_names
-    #     pt = JointTrajectoryPoint()
-    #     pt.positions = q_next.tolist()
-    #     step_distance = torch.norm(delta_q[0]).item()
-    #     pt.time_from_start = rospy.Duration(min(0.1, max(0.05, step_distance / 1.0)))
-    #     traj.points = [pt]
-    #     self.ros_pub.publish(traj)
-
-    #     return self.real_timer, q_next, grip_acts
+    def ensure_moveit_connected(self):
+        """Connect to the MoveIt planning service only when needed."""
+        if self.plan_srv is None:
+            rospy.loginfo("Connecting to /plan_pose service...")
+            rospy.wait_for_service("/plan_pose")
+            self.plan_srv = rospy.ServiceProxy("/plan_pose", PlanPose)
+            rospy.loginfo("Connected to MoveIt planner service.")
 
 
+    def plan_with_moveit(self, goal_pos_xyz, goal_quat_xyzw, frame="world", group="manipulator"):
+        self.ensure_moveit_connected()
+
+        goal = PoseStamped()
+        goal.header.stamp = rospy.Time.now()
+        goal.header.frame_id = frame
+        goal.pose.position.x, goal.pose.position.y, goal.pose.position.z = goal_pos_xyz
+        goal.pose.orientation.x, goal.pose.orientation.y, goal.pose.orientation.z, goal.pose.orientation.w = goal_quat_xyzw
+
+        resp = self.plan_srv(goal, group)
+        if not resp.success:
+            raise RuntimeError(f"MoveIt planning failed: {resp.message}")
+        return resp.traj  # trajectory_msgs/JointTrajectory
+
+
+    def execute_traj(self, traj):
+        # You already publish JointTrajectory to your Kawasaki controller;
+        # you can reuse 'traj' directly or convert/time-scale as needed.
+        self.ros_pub.publish(traj)
+
+    def _set_moveit_boxes_param(self):
+        # Build boxes in world frame
+        boxes = []
+
+        # Example: big part (use center pose + quaternion you already have)
+        big_center, big_quat = self.pose_transform(
+            self.sim.big_part_pos[0], self.sim.big_part_rot[0]
+        )
+        big_size   = [0.30, 0.30, 0.01]                         # replace with your actual extents
+
+        boxes.append({
+            "id": "big_part",
+            "size": big_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": big_center.tolist()[0], "y": big_center.tolist()[1], "z": big_center.tolist()[2]},
+                "orientation": {"x": big_quat.tolist()[0], "y": big_quat.tolist()[1], "z": big_quat.tolist()[2], "w": big_quat.tolist()[3]},
+            },
+        })
+
+        # Example: L part (or small part) as a simple box around it
+        L_center, L_quat = self.pose_transform(
+            self.sim.L_part_pos[0], self.sim.L_part_rot[0]
+        )
+        L_size   = [0.04, 0.20, 0.01]                           # tune
+
+        boxes.append({
+            "id": "l_part",
+            "size": L_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": L_center.tolist()[0], "y": L_center.tolist()[1], "z": L_center.tolist()[2]},
+                "orientation": {"x": L_quat.tolist()[0], "y": L_quat.tolist()[1], "z": L_quat.tolist()[2], "w": L_quat.tolist()[3]},
+            },
+        })
+
+        R_center, R_quat = self.pose_transform(
+            self.sim.R_part_pos[0], self.sim.R_part_rot[0]
+        )
+        L_size   = [0.04, 0.20, 0.01]                           # tune
+
+        boxes.append({
+            "id": "r_part",
+            "size": L_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": R_center.tolist()[0], "y": R_center.tolist()[1], "z": R_center.tolist()[2]},
+                "orientation": {"x": R_quat.tolist()[0], "y": R_quat.tolist()[1], "z": R_quat.tolist()[2], "w": R_quat.tolist()[3]},
+            },
+        })
+
+        # Example: small cube near L part (your previous cube_center)
+        cube_center_sim = (self.sim.L_part_pos + quat_rotate(
+            self.sim.L_part_rot, torch.tensor([[0,0,0.03]], device=self.device)
+        ))[0]
+        cube_center, cube_quat = self.pose_transform(
+            cube_center_sim, self.sim.L_part_rot[0]
+            )
+        cube_size = [0.04, 0.04, 0.04]
+
+        boxes.append({
+            "id": "small_cube",
+            "size": cube_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": cube_center.tolist()[0], "y": cube_center.tolist()[1], "z": cube_center.tolist()[2]},
+                "orientation": {"x": cube_quat.tolist()[0], "y": cube_quat.tolist()[1], "z": cube_quat.tolist()[2], "w": cube_quat.tolist()[3]},
+            },
+        })
+
+        R_cube_center_sim = (self.sim.R_part_pos + quat_rotate(
+            self.sim.R_part_rot, torch.tensor([[0,0,0.03]], device=self.device)
+        ))[0]
+        R_cube_center, R_cube_quat = self.pose_transform(
+            R_cube_center_sim, self.sim.R_part_rot[0]
+            )
+        cube_size = [0.04, 0.04, 0.04]
+
+        boxes.append({
+            "id": "r_small_cube",
+            "size": cube_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": R_cube_center.tolist()[0], "y": R_cube_center.tolist()[1], "z": R_cube_center.tolist()[2]},
+                "orientation": {"x": R_cube_quat.tolist()[0], "y": R_cube_quat.tolist()[1], "z": R_cube_quat.tolist()[2], "w": R_cube_quat.tolist()[3]},
+            },
+        })
+
+        rospy.set_param("/isaac/moveit_boxes", boxes)
+
+    def _push_boxes_to_moveit(self):
+        self._set_moveit_boxes_param()
+        try:
+            rospy.wait_for_service("/update_boxes", timeout=1.0)
+            upd = rospy.ServiceProxy("/update_boxes", Trigger)
+            resp = upd()
+            rospy.loginfo(f"/update_boxes -> success={resp.success}, msg={resp.message}")
+        except rospy.ROSException:
+            rospy.logwarn("Timeout waiting for /update_boxes; boxes will sync at planning time.")
+
+    def _send_gripper(self, width: float, duration_s: float = 0.1):
+        """
+        width: finger separation per joint (you use two independent prismatic joints).
+            0.04 -> open, 0.00 -> close
+        """
+        jt = JointTrajectory()
+        jt.header.stamp = rospy.Time.now()
+        jt.joint_names = ["panda_finger_joint1", "panda_finger_joint2"]
+
+        p0 = JointTrajectoryPoint()
+        # read current finger pos from /joint_states if you store it; fallback to current command:
+        # here we just start at current q_real end segments if you mirror them; safe to omit
+        p0.positions = [None, None]  # controller will treat as start-at-current if omitted
+        p0.time_from_start = rospy.Duration(0.0)
+
+        p1 = JointTrajectoryPoint()
+        p1.positions = [width, width]
+        p1.time_from_start = rospy.Duration(duration_s)
+
+        jt.points = [p1]  # send single timed point is fine; controller ramps to it
+        self.tool_pub.publish(jt)
     # ---------- main step ----------
     def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
-        if (not self.waypoints) or (self.task_name != task_name):
-            self.waypoints.clear(); self.ros_waypoint_idx.zero_(); self.waypoint_idx.zero_(); self.task_name = task_name
-            self._lookup_real_ee_pose()
-            start, goal = self.ee_pos_real.unsqueeze(0), goal_pose[:, :3]
-            if plan_mode == "plan":
-                if self.prev_task_goal is not None: 
-                    start = self.prev_task_goal
-                big_low,big_high = self._obb_from_pose(self.sim.big_part_pos[0], self.sim.big_part_rot[0], torch.tensor([0.15,0.15,0.015], device=self.device))
-                l_low,l_high = self._obb_from_pose(self.sim.L_part_pos[0], self.sim.L_part_rot[0], torch.tensor([0.02,0.1,0.01], device=self.device))
-                cube_center = self.sim.L_part_pos + quat_rotate(self.sim.L_part_rot, torch.tensor([[0,0,0.03]], device=self.device))
-                c_low = cube_center.squeeze(0)-torch.tensor([0.02,0.02,0.02], device=self.device)
-                c_high= cube_center.squeeze(0)+torch.tensor([0.02,0.02,0.02], device=self.device)
-                obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
-                path=rrt_star_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.1)
-                dense=interpolate_waypoints(path,step=0.02)
-                self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
+        if not self.traj or self.task_name != task_name:
+            print(task_name)
+            self.traj = None
+            self.task_name = task_name
+
+            self._push_boxes_to_moveit()
+
+            if self.weld_timer>=2.0 and self.real_timer >= 2.0: 
+                self.weld_timer = 0.0
+                self.real_timer = 0.0
+                self._send_gripper(0.04)
+                gripper_act = torch.ones((1, 2), device=self.device) * 0.04
+
+            goal_pos, goal_quat = self.pose_transform(goal_pose[0, :3], goal_pose[0, 3:])
+            self.traj = self.plan_with_moveit(goal_pos.cpu().numpy(), goal_quat.cpu().numpy())
+            self.current_plan = True
+            # self.traj = traj.points
+            self.execute_traj(self.traj)
+        
+        if gripper_mode == "auto" and self.real_timer < 2.0:
+            final_joint_state_err = torch.norm(torch.tensor(self.traj.points[-1].positions, device=self.device) - self.q_real).item()
+            if final_joint_state_err == 0.0:
+                self._send_gripper(0.02)
+                gripper_act = torch.ones((1, 2), device=self.device) * 0.02
+                self.real_timer += self.sim.sim_params.dt
+                self.weld_timer += self.sim.sim_params.dt
             else:
-                self.waypoints.append(goal)
-                self.prev_task_goal=goal
+                self._send_gripper(0.04)
+                gripper_act = torch.ones((1, 2), device=self.device) * 0.04
+        else:
+            self._send_gripper(0.04)
+            gripper_act = torch.ones((1, 2), device=self.device) * 0.04
 
-        self._lookup_real_ee_pose()
-        hand_pos = self.sim.hand3_pos
-        hand_rot = self.sim.hand3_rot
-        goal_rot = goal_pose[:,3:]
+        
+        
+        # self._weld_controller()
+        arm3_action = torch.tensor(self.q_real, dtype=torch.float32, device=self.device).unsqueeze(0)
+        self.sim.pos_action[:, self.arm_idx, :self.arm_dof] = arm3_action
+        self.sim.pos_action[:, self.arm_idx, self.arm_dof:] = gripper_act
 
-        if self.weld_timer>=2.0 and self.real_timer >= 2.0: 
-            self.weld_timer=0.0
-            self.real_timer = 0.0
-
-        # self.waypoint_idx, self.sim.pos_action, self.weld_timer = weld_controller(
-        #     hand_pos, hand_rot, self.waypoints, goal_rot, self.waypoint_idx,
-        #     self.sim.j_eef3, self.sim.dof_pos, self.sim.sim_params.dt, self.sim.pos_action,
-        #     self.robot_mids, self.arm_idx, self.sim.num_envs, self.arm_dof,
-        #     self.weld_timer, gripper_mode)
-
-        self.real_timer, q_next, grip_act = self._real_weld_controller(goal_rot, self.sim.sim_params.dt, gripper_mode, plan_mode)
-        arm3_action = torch.cat([q_next.unsqueeze(0), grip_act], dim=1).squeeze(0)
-        self.sim.pos_action[:, self.arm_idx] = arm3_action
         return self.weld_timer, self.real_timer
+    # def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
+    #     if (not self.waypoints) or (self.task_name != task_name):
+    #         self.waypoints.clear(); self.ros_waypoint_idx.zero_(); self.waypoint_idx.zero_(); self.task_name = task_name
+    #         self._lookup_real_ee_pose()
+    #         start, goal = self.ee_pos_real.unsqueeze(0), goal_pose[:, :3]
+    #         if plan_mode == "plan":
+    #             if self.prev_task_goal is not None: 
+    #                 start = self.prev_task_goal
+    #             big_low,big_high = self._obb_from_pose(self.sim.big_part_pos[0], self.sim.big_part_rot[0], torch.tensor([0.15,0.15,0.015], device=self.device))
+    #             l_low,l_high = self._obb_from_pose(self.sim.L_part_pos[0], self.sim.L_part_rot[0], torch.tensor([0.02,0.1,0.01], device=self.device))
+    #             cube_center = self.sim.L_part_pos + quat_rotate(self.sim.L_part_rot, torch.tensor([[0,0,0.03]], device=self.device))
+    #             c_low = cube_center.squeeze(0)-torch.tensor([0.02,0.02,0.02], device=self.device)
+    #             c_high= cube_center.squeeze(0)+torch.tensor([0.02,0.02,0.02], device=self.device)
+    #             obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
+    #             path=rrt_star_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.1)
+    #             dense=interpolate_waypoints(path,step=0.02)
+    #             self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
+    #         else:
+    #             self.waypoints.append(goal)
+    #             self.prev_task_goal=goal
+
+    #     self._lookup_real_ee_pose()
+    #     hand_pos = self.sim.hand3_pos
+    #     hand_rot = self.sim.hand3_rot
+    #     goal_rot = goal_pose[:,3:]
+
+    #     if self.weld_timer>=2.0 and self.real_timer >= 2.0: 
+    #         self.weld_timer=0.0
+    #         self.real_timer = 0.0
+
+    #     # self.waypoint_idx, self.sim.pos_action, self.weld_timer = weld_controller(
+    #     #     hand_pos, hand_rot, self.waypoints, goal_rot, self.waypoint_idx,
+    #     #     self.sim.j_eef3, self.sim.dof_pos, self.sim.sim_params.dt, self.sim.pos_action,
+    #     #     self.robot_mids, self.arm_idx, self.sim.num_envs, self.arm_dof,
+    #     #     self.weld_timer, gripper_mode)
+
+    #     self.real_timer, q_next, grip_act = self._real_weld_controller(goal_rot, self.sim.sim_params.dt, gripper_mode, plan_mode)
+    #     arm3_action = torch.cat([q_next.unsqueeze(0), grip_act], dim=1).squeeze(0)
+    #     self.sim.pos_action[:, self.arm_idx] = arm3_action
+    #     return self.weld_timer, self.real_timer

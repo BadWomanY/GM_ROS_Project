@@ -1,0 +1,8 @@
+# request
+geometry_msgs/PoseStamped goal
+string group_name         # e.g. "manipulator"
+---
+# response
+bool success
+trajectory_msgs/JointTrajectory traj
+string message

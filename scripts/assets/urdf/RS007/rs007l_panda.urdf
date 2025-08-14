@@ -255,6 +255,13 @@
     </collision>
   </link>
 
+  <link name="weld_tip"/>
+  <joint name="weld_tip_fixed" type="fixed">
+    <parent link="panda_hand"/>
+    <child link="weld_tip"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/> <!-- adjust xyz to midpoint between open fingers -->
+  </joint>
+
   <joint name="panda_hand_joint" type="fixed">
     <parent link="link6"/>
     <child link="panda_hand"/>

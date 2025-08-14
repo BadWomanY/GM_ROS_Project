@@ -3,13 +3,35 @@ project(isaac_ros_bridge)
 
 find_package(catkin REQUIRED COMPONENTS
   rospy
+  roscpp
   std_msgs
   geometry_msgs
+  trajectory_msgs
+  moveit_msgs
+  message_generation
+)
+
+add_service_files(
+  FILES
+  PlanPose.srv
 )
 
 catkin_python_setup()
 
-catkin_package()
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+  geometry_msgs
+  trajectory_msgs
+)
+
+catkin_package(CATKIN_DEPENDS
+  message_runtime
+  std_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_msgs
+)
 
 include_directories(
   ${catkin_INCLUDE_DIRS}

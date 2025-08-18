@@ -145,9 +145,9 @@ class ArmController3:
         self.traj = None
 
         # ---------- ROS comms ----------
-        self.joint_names = [f"joint{i+1}" for i in range(self.arm_dof)]
-        self.ros_pub = rospy.Publisher("/rs007l_arm_controller/command", JointTrajectory, queue_size=1)
-        self.tool_pub = rospy.Publisher("franka_gripper_controller/command", JointTrajectory, queue_size=1)
+        self.joint_names = [f"a3_joint{i+1}" for i in range(self.arm_dof)]
+        self.ros_pub = rospy.Publisher("/a3/rs007l_arm_controller/command", JointTrajectory, queue_size=1)
+        self.tool_pub = rospy.Publisher("/a3/franka_gripper_controller/command", JointTrajectory, queue_size=1)
         self.listener = tf.TransformListener()
 
         # live buffers for real robot state
@@ -164,130 +164,8 @@ class ArmController3:
         if len(indices) == self.arm_dof:
             self.q_real = torch.tensor([msg.position[i] for i in indices], dtype=torch.float32, device=self.device)
 
-    def _lookup_real_ee_pose(self):
-        try:
-            trans, rot = self.listener.lookupTransform("base_link", "link6", rospy.Time(0))
-            # Apply transform to match IsaacGym sim frame
-            sim_rot = torch.tensor([0.0, 0.0, 1.0, 0.0], device=self.device)  # 180° Z rot
-            sim_trans = torch.tensor([-0.45, 0.0, 0.1], device=self.device)
-
-            pos = torch.tensor(trans, dtype=torch.float32, device=self.device)
-            quat = torch.tensor(rot, dtype=torch.float32, device=self.device)
-            self.ee_pos_real = quat_rotate(sim_rot.unsqueeze(0), pos.unsqueeze(0)).squeeze(0) + sim_trans
-            self.ee_rot_real = quat_mul(quat_conjugate(sim_rot.unsqueeze(0)), quat.unsqueeze(0)).squeeze(0)
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            pass
 
     # ---------- util ----------
-    def pose_transform(self, pos, quat):
-        sim_rot = torch.tensor([0.0, 0.0, -1.0, 0.0], device=self.device)  # 180° Z rot
-        sim_trans = torch.tensor([0.45, 0.0, -0.1], device=self.device)
-        pos_transformed = quat_rotate(sim_rot.unsqueeze(0), (pos + sim_trans).unsqueeze(0)).squeeze(0)
-        rot_transformed = quat_mul(quat_conjugate(sim_rot.unsqueeze(0)), quat.unsqueeze(0)).squeeze(0)
-        return pos_transformed, rot_transformed
-
-    def _obb_from_pose(self, center, quat, half_extents):
-        signs = torch.tensor([[ -1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]], device=center.device)
-        corners_local = signs * half_extents.unsqueeze(0)
-        corners_world = quat_rotate(quat.unsqueeze(0).expand(8,4), corners_local) + center.unsqueeze(0)
-        return corners_world.min(dim=0).values, corners_world.max(dim=0).values
-
-    def _real_weld_controller(self, goal_rot, dt, gripper_mode, plan_mode):
-        # 1) update real ee pose & joint states
-        self._lookup_real_ee_pose()
-        hand_pos = self.ee_pos_real.unsqueeze(0)   # (1,3)
-        hand_rot = self.ee_rot_real.unsqueeze(0)   # (1,4)
-
-        # 2) check if we’re done
-        if self.ros_waypoint_idx[0] >= len(self.waypoints):
-            return self.real_timer, None, None
-
-        # 3) decide grip actions & advance waypoint index
-        goal_pos = self.waypoints[self.ros_waypoint_idx[0]][0]
-        pos_err = goal_pos - hand_pos[0]
-        reached = torch.norm(pos_err) < 0.025
-
-        if reached and self.ros_waypoint_idx[0] == len(self.waypoints)-1:
-            # final pose → gripping
-            if gripper_mode == "auto" and self.real_timer < 2.0:
-                grip_acts = torch.ones((1,2), device=self.device) * 0.02
-                self.real_timer += dt
-                self.weld_timer += dt
-            else:
-                grip_acts = torch.ones((1,2), device=self.device) * 0.04
-        else:
-            grip_acts = torch.ones((1,2), device=self.device) * 0.04
-            if reached:
-                self.ros_waypoint_idx[0] += 1
-        self.ros_waypoint_idx.clamp_(max=len(self.waypoints)-1)
-
-        # 4) build look‑ahead trajectory
-        lookahead_traj = []
-        max_lookahead = 8
-        idx = self.ros_waypoint_idx[0].item()
-        # start from real joint reading
-        q_seed = self.q_real.clone()
-
-        for step in range(max_lookahead):
-            i = idx + step
-            if i >= len(self.waypoints):
-                break
-            # compute local dpose
-            wp = self.waypoints[i][0]
-            pos_err = wp - hand_pos[0]
-            ori_err = orientation_error(goal_rot, hand_rot)[0]
-            dpos = torch.cat([
-                torch.clamp(pos_err, -0.015, 0.015),
-                torch.clamp(ori_err, -0.2, 0.2)
-            ]).unsqueeze(0).unsqueeze(-1)  # (1,6,1)
-
-            # package real dof buffer
-            dof_buf = self.sim.dof_pos.clone()
-            dof_buf[0, self.arm_idx, :self.arm_dof] = q_seed.unsqueeze(-1)
-
-            # IK step
-            delta_q = control_ik_nullspace(
-                dpos, self.sim.j_eef3[:1], 1, dof_buf,
-                self.robot_mids, self.arm_idx, self.arm_dof
-            )[0]
-
-            # next q
-            q_seed = tensor_clamp(
-                q_seed + delta_q,
-                self.sim.robot_lower_limits_tensor[:self.arm_dof],
-                self.sim.robot_upper_limits_tensor[:self.arm_dof]
-            )
-            lookahead_traj.append(q_seed.clone())
-
-            # simulate ee motion forward for next iteration
-            hand_pos += quat_rotate(hand_rot, (wp - hand_pos[0]).unsqueeze(0))
-
-        # 5) publish the trajectory in one go
-        traj = JointTrajectory()
-        traj.header.stamp = rospy.Time.now()
-        traj.joint_names = self.joint_names
-
-        dt_step = 0.1  # 100 ms per waypoint
-        for k, qk in enumerate(lookahead_traj):
-            pt = JointTrajectoryPoint()
-            pt.positions = qk.tolist()
-            # optional: hint velocities
-            if k > 0:
-                vel = (lookahead_traj[k] - lookahead_traj[k-1]) / dt_step
-                pt.velocities = vel.tolist()
-            pt.time_from_start = rospy.Duration((k+1) * dt_step)
-            traj.points.append(pt)
-
-        self.ros_pub.publish(traj)
-
-        # 6) compute q_next for return (first element) and bump timers
-        if lookahead_traj:
-            q_next = lookahead_traj[0]
-        else:
-            q_next = self.q_real
-
-        return self.real_timer, q_next, grip_acts
-
     def ensure_moveit_connected(self):
         """Connect to the MoveIt planning service only when needed."""
         if self.plan_srv is None:
@@ -297,7 +175,7 @@ class ArmController3:
             rospy.loginfo("Connected to MoveIt planner service.")
 
 
-    def plan_with_moveit(self, goal_pos_xyz, goal_quat_xyzw, frame="world", group="manipulator"):
+    def plan_with_moveit(self, goal_pos_xyz, goal_quat_xyzw, frame="world", group="a3_manipulator"):
         self.ensure_moveit_connected()
 
         goal = PoseStamped()
@@ -313,8 +191,6 @@ class ArmController3:
 
 
     def execute_traj(self, traj):
-        # You already publish JointTrajectory to your Kawasaki controller;
-        # you can reuse 'traj' directly or convert/time-scale as needed.
         self.ros_pub.publish(traj)
 
     def _set_moveit_boxes_param(self):
@@ -322,9 +198,9 @@ class ArmController3:
         boxes = []
 
         # Example: big part (use center pose + quaternion you already have)
-        big_center, big_quat = self.pose_transform(
-            self.sim.big_part_pos[0], self.sim.big_part_rot[0]
-        )
+        big_center = self.sim.big_part_pos[0]
+        big_quat = self.sim.big_part_rot[0]
+        
         big_size   = [0.30, 0.30, 0.01]                         # replace with your actual extents
 
         boxes.append({
@@ -338,14 +214,13 @@ class ArmController3:
         })
 
         # Example: L part (or small part) as a simple box around it
-        L_center, L_quat = self.pose_transform(
-            self.sim.L_part_pos[0], self.sim.L_part_rot[0]
-        )
-        L_size   = [0.04, 0.20, 0.01]                           # tune
+        L_center = self.sim.L_part_pos[0]
+        L_quat = self.sim.L_part_rot[0]
+        L_long   = [0.04, 0.20, 0.01]                           # tune
 
         boxes.append({
             "id": "l_part",
-            "size": L_size,
+            "size": L_long,
             "pose": {
                 "frame_id": "world",
                 "position": {"x": L_center.tolist()[0], "y": L_center.tolist()[1], "z": L_center.tolist()[2]},
@@ -353,14 +228,29 @@ class ArmController3:
             },
         })
 
-        R_center, R_quat = self.pose_transform(
-            self.sim.R_part_pos[0], self.sim.R_part_rot[0]
-        )
-        L_size   = [0.04, 0.20, 0.01]                           # tune
+        L_short = self.sim.L_part_pos[0] + quat_rotate(self.sim.L_part_rot, torch.tensor([[0.07,-0.08,0.0]], device=self.device))[0]
+        # Rotate 90 degrees around z-axis relative to L_part orientation
+        z_rot_90 = torch.tensor([0.0, 0.0, 0.7071, 0.7071], device=self.device)  # 90 deg around z
+        L_short_quat = quat_mul(self.sim.L_part_rot[0], z_rot_90)
+        L_short_size = [0.04, 0.1, 0.01]
+
+        boxes.append({
+            "id": "l_short_part",
+            "size": L_short_size,
+            "pose": {
+                "frame_id": "world",
+                "position": {"x": L_short.tolist()[0], "y": L_short.tolist()[1], "z": L_short.tolist()[2]},
+                "orientation": {"x": L_short_quat.tolist()[0], "y": L_short_quat.tolist()[1], "z": L_short_quat.tolist()[2], "w": L_short_quat.tolist()[3]},
+            },
+        })
+
+        R_center = self.sim.R_part_pos[0]
+        R_quat = self.sim.R_part_rot[0]
+        R_size   = [0.04, 0.20, 0.01]                           # tune
 
         boxes.append({
             "id": "r_part",
-            "size": L_size,
+            "size": R_size,
             "pose": {
                 "frame_id": "world",
                 "position": {"x": R_center.tolist()[0], "y": R_center.tolist()[1], "z": R_center.tolist()[2]},
@@ -372,9 +262,8 @@ class ArmController3:
         cube_center_sim = (self.sim.L_part_pos + quat_rotate(
             self.sim.L_part_rot, torch.tensor([[0,0,0.03]], device=self.device)
         ))[0]
-        cube_center, cube_quat = self.pose_transform(
-            cube_center_sim, self.sim.L_part_rot[0]
-            )
+        cube_center = cube_center_sim
+        cube_quat = self.sim.L_part_rot[0]
         cube_size = [0.04, 0.04, 0.04]
 
         boxes.append({
@@ -390,9 +279,8 @@ class ArmController3:
         R_cube_center_sim = (self.sim.R_part_pos + quat_rotate(
             self.sim.R_part_rot, torch.tensor([[0,0,0.03]], device=self.device)
         ))[0]
-        R_cube_center, R_cube_quat = self.pose_transform(
-            R_cube_center_sim, self.sim.R_part_rot[0]
-            )
+        R_cube_center = R_cube_center_sim
+        R_cube_quat = self.sim.R_part_rot[0]
         cube_size = [0.04, 0.04, 0.04]
 
         boxes.append({
@@ -453,8 +341,7 @@ class ArmController3:
                 self._send_gripper(0.04)
                 gripper_act = torch.ones((1, 2), device=self.device) * 0.04
 
-            goal_pos, goal_quat = self.pose_transform(goal_pose[0, :3], goal_pose[0, 3:])
-            self.traj = self.plan_with_moveit(goal_pos.cpu().numpy(), goal_quat.cpu().numpy())
+            self.traj = self.plan_with_moveit(goal_pose[0, :3].cpu().numpy(), goal_pose[0, 3:].cpu().numpy())
             self.current_plan = True
             # self.traj = traj.points
             self.execute_traj(self.traj)
@@ -481,43 +368,3 @@ class ArmController3:
         self.sim.pos_action[:, self.arm_idx, self.arm_dof:] = gripper_act
 
         return self.weld_timer, self.real_timer
-    # def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
-    #     if (not self.waypoints) or (self.task_name != task_name):
-    #         self.waypoints.clear(); self.ros_waypoint_idx.zero_(); self.waypoint_idx.zero_(); self.task_name = task_name
-    #         self._lookup_real_ee_pose()
-    #         start, goal = self.ee_pos_real.unsqueeze(0), goal_pose[:, :3]
-    #         if plan_mode == "plan":
-    #             if self.prev_task_goal is not None: 
-    #                 start = self.prev_task_goal
-    #             big_low,big_high = self._obb_from_pose(self.sim.big_part_pos[0], self.sim.big_part_rot[0], torch.tensor([0.15,0.15,0.015], device=self.device))
-    #             l_low,l_high = self._obb_from_pose(self.sim.L_part_pos[0], self.sim.L_part_rot[0], torch.tensor([0.02,0.1,0.01], device=self.device))
-    #             cube_center = self.sim.L_part_pos + quat_rotate(self.sim.L_part_rot, torch.tensor([[0,0,0.03]], device=self.device))
-    #             c_low = cube_center.squeeze(0)-torch.tensor([0.02,0.02,0.02], device=self.device)
-    #             c_high= cube_center.squeeze(0)+torch.tensor([0.02,0.02,0.02], device=self.device)
-    #             obs=[(big_low,big_high),(l_low,l_high),(c_low,c_high)]
-    #             path=rrt_star_plan(start[0],goal[0],self.sim.reachable_pos3,obs,step_size=0.04,goal_thresh=0.01,device=self.device,safety_radius=0.1)
-    #             dense=interpolate_waypoints(path,step=0.02)
-    #             self.waypoints=[pt.unsqueeze(0).repeat(self.sim.num_envs,1) for pt in path]+[goal]
-    #         else:
-    #             self.waypoints.append(goal)
-    #             self.prev_task_goal=goal
-
-    #     self._lookup_real_ee_pose()
-    #     hand_pos = self.sim.hand3_pos
-    #     hand_rot = self.sim.hand3_rot
-    #     goal_rot = goal_pose[:,3:]
-
-    #     if self.weld_timer>=2.0 and self.real_timer >= 2.0: 
-    #         self.weld_timer=0.0
-    #         self.real_timer = 0.0
-
-    #     # self.waypoint_idx, self.sim.pos_action, self.weld_timer = weld_controller(
-    #     #     hand_pos, hand_rot, self.waypoints, goal_rot, self.waypoint_idx,
-    #     #     self.sim.j_eef3, self.sim.dof_pos, self.sim.sim_params.dt, self.sim.pos_action,
-    #     #     self.robot_mids, self.arm_idx, self.sim.num_envs, self.arm_dof,
-    #     #     self.weld_timer, gripper_mode)
-
-    #     self.real_timer, q_next, grip_act = self._real_weld_controller(goal_rot, self.sim.sim_params.dt, gripper_mode, plan_mode)
-    #     arm3_action = torch.cat([q_next.unsqueeze(0), grip_act], dim=1).squeeze(0)
-    #     self.sim.pos_action[:, self.arm_idx] = arm3_action
-    #     return self.weld_timer, self.real_timer

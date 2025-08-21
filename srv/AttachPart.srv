@@ -1,0 +1,6 @@
+string part_type
+string gripper_frame
+geometry_msgs/PoseStamped part_pose
+---
+bool success
+string message

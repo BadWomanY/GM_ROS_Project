@@ -108,7 +108,7 @@
       <material name="White">
         <color rgba="1 1 1 1"/>
       </material>
-      <origin xyz="0 0 0.3825" rpy="-1.57 0 0"/>
+      <origin xyz="0 0 0.3825" rpy="0 0 0"/>
     </collision>
     <xacro:default_inertial mass="5.066"/>
   </link>

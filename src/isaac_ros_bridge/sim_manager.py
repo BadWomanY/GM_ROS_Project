@@ -154,6 +154,7 @@ class RobotCellSim:
         self.part_idxs = []
         self.init_pos_list = []
         self.init_rot_list = []
+        self.tip_idxs = []
 
         spacing = 2.0
         env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
@@ -219,7 +220,9 @@ class RobotCellSim:
 
                 # get global index of hand in rigid body state tensor
                 hand_idx = self.gym.find_actor_rigid_body_index(env, arm, "panda_hand", gymapi.DOMAIN_SIM)
+                tip_idx = self.gym.find_actor_rigid_body_index(env, arm, "weld_tip", gymapi.DOMAIN_SIM)
                 self.hand_idxs.append(hand_idx)
+                self.tip_idxs.append(tip_idx)
 
                 # add table
                 if arm_idx == 0:
@@ -433,7 +436,9 @@ class RobotCellSim:
         self.hand3_pos = hand_poses[:, 2]
         self.hand3_rot = hand_rots[:, 2]
 
-        self.weld_tip_pos = self.rb_states[37, :3]
+        self.hand1_tip_pos = self.rb_states[self.tip_idxs[0], :3]
+        self.hand2_tip_pos = self.rb_states[self.tip_idxs[1], :3]
+        self.weld_tip_pos = self.rb_states[self.tip_idxs[2], :3]
 
         # how far the hand should be from box for grasping
         self.grasp_offset = 0.11
@@ -558,6 +563,8 @@ class RobotCellSim:
         # Hardcode the initial joint 1 pos of the welding robot to 90 degrees so it faces the working environment.
         if self.arm3_flag:
             self.pos_action[:, 2, :self.robot_dof] = torch.tensor([-1.5700, -0.1500, -0.9383, -0.1605, -1.57, -1.3879], device=self.device)
+            # self.pos_action[:, 0, :self.robot_dof] = torch.tensor(self.default_dof_pos_1[:self.robot_dof], device=self.device)
+            # self.pos_action[:, 1, :self.robot_dof] = torch.tensor(self.default_dof_pos_2[:self.robot_dof], device=self.device)
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.pos_action))
 
         for evt in self.gym.query_viewer_action_events(self.viewer):

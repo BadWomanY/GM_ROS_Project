@@ -31,6 +31,10 @@ class TaskPlanner():
         # Number of parts and their spot weld numbers.
         self.part1_weld_num = 7
         self.part2_weld_num = 5
+        self.pre_ids = [3, 6]
+        self.post_ids = [0, 1, 2, 4, 5]
+        self.pre_ids_R = [7, 11]
+        self.post_ids_R = [9, 10]
 
         self.arm3_flag = False
     
@@ -87,18 +91,17 @@ class TaskPlanner():
 
     def create_task_lib_r1(self):
         # Robot 1 sub-tasks
-        big_part_grasp_pos = self.sim.big_part_pos.clone()
-        big_part_grasp_pos[:, 2] += self.sim.grasp_offset  # Grasping position.
+        big_part_grasp_pos = self.sim.big_part_pos.clone() + self.sim.part_grasp_offset
         big_part_grasp_rot = self.sim.goal_rot_gripp1  # Grasping orientation in quat.
         big_part_grasp_pose = torch.cat([big_part_grasp_pos, big_part_grasp_rot], dim=1)
         self.r1_grasp = ['T_1_1', big_part_grasp_pose, [], [], 'no-plan', 'auto', False]
         self.r1_task_queue.append(self.r1_grasp)
         self.task_lib['T_1_1'] = self.r1_grasp
 
-        hand1_mate_pos = self.sim.big_part_anchor + quat_rotate(self.sim.big_part_goal_quat, self.hand1_to_part_offset)
+        hand1_mate_pos = self.sim.big_part_anchor + quat_rotate(self.sim.big_part_goal_quat, self.sim.part_grasp_offset)
         hand1_mate_rot = self.sim.q_hand1_goal
         hand1_mate_pose = torch.cat([hand1_mate_pos, hand1_mate_rot], dim=1)
-        self.r1_mate = ['T_1_2', hand1_mate_pose, ['T_1_1'], [f"T_3_{self.part1_weld_num}"], 'plan', 'close', False]
+        self.r1_mate = ['T_1_2', hand1_mate_pose, ['T_1_1', 'T_2_1'], [f"T_3_{self.part1_weld_num}"], 'plan', 'close', False]
         self.r1_task_queue.append(self.r1_mate)
         self.task_lib['T_1_2'] = self.r1_mate
 
@@ -112,7 +115,6 @@ class TaskPlanner():
     def create_task_lib_r2(self):
         # Robot 2 sub-tasks
         L_part_grasp_pos = self.sim.L_part_pos + quat_rotate(self.sim.L_part_rot, self.sim.part_grasp_offset)
-        L_part_grasp_pos[:, 2] += self.sim.grasp_offset_arm2  # Grasping position.
         part_grasp_rot = self.sim.goal_rot_gripp2  # Grasping orientation in quat for small part grasping.
         L_part_grasp_pose = torch.cat([L_part_grasp_pos, part_grasp_rot], dim=1)
         self.r2_L_grasp = ['T_2_1', L_part_grasp_pose, [], [], 'no-plan', 'auto', False]
@@ -124,7 +126,7 @@ class TaskPlanner():
         part_offset = L_part_offset
         hand2_mate_pos, self.L_part_goal_rot = part_mate_hand_pos(self.sim.big_part_anchor,
                                               self.sim.big_part_goal_quat,
-                                              self.sim.hand_to_small,
+                                              self.sim.part_grasp_offset,
                                               part_offset,
                                               weld_big_L,
                                               weld_L,
@@ -136,7 +138,7 @@ class TaskPlanner():
         self.L_part_goal_rot = quat_mul(hand2_mate_rot, quat_conjugate(self.hand2_to_Lpart_rot_offset))
 
         hand2_mate_pose = torch.cat([hand2_mate_pos, hand2_mate_rot], dim=1)
-        self.r2_L_mate = ['T_2_2', hand2_mate_pose, ['T_2_1'], ['T_3_2'], 'plan', 'close', False]
+        self.r2_L_mate = ['T_2_2', hand2_mate_pose, ['T_2_1'], [f'T_3_{len(self.pre_ids)}'], 'plan', 'close', False]
         self.r2_task_queue.append(self.r2_L_mate)
         self.task_lib['T_2_2'] = self.r2_L_mate
 
@@ -150,19 +152,26 @@ class TaskPlanner():
 
         # R part grasping task.
         R_part_grasp_pos = self.sim.R_part_pos + quat_rotate(self.sim.R_part_rot, self.sim.part_grasp_offset)
-        R_part_grasp_pos[:, 2] += self.sim.grasp_offset_arm2  # Grasping position.
         part_grasp_rot = self.sim.goal_rot_gripp2_R  # Grasping orientation in quat for small part grasping.
         R_part_grasp_pose = torch.cat([R_part_grasp_pos, part_grasp_rot], dim=1)
-        self.r2_L_grasp = ['T_2_4', R_part_grasp_pose, ['T_2_3'], [], 'no-plan', 'auto', False]
-        self.r2_task_queue.append(self.r2_L_grasp)
-        self.task_lib['T_2_4'] = self.r2_L_grasp
+        self.r2_R_grasp = ['T_2_4', R_part_grasp_pose, ['T_2_3'], [], 'no-plan', 'auto', False]
+        self.r2_task_queue.append(self.r2_R_grasp)
+        self.task_lib['T_2_4'] = self.r2_R_grasp
+
+        # R part buffer/lift task - lift the part up before mating
+        R_part_buffer_pos = R_part_grasp_pos.clone()
+        R_part_buffer_pos[:, 2] += 0.20  # Lift 10cm above grasp position
+        R_part_buffer_pose = torch.cat([R_part_buffer_pos, part_grasp_rot], dim=1)
+        self.r2_R_buffer = ['T_2_5', R_part_buffer_pose, ['T_2_4', 'T_1_3'], [], 'plan', 'close', False]
+        self.r2_task_queue.append(self.r2_R_buffer)
+        self.task_lib['T_2_5'] = self.r2_R_buffer
 
         weld_big_R = self.sim.big_part_welding_pos[:, 7:]
         weld_R = self.sim.R_part_welding_pos
         part_offset = R_part_offset
         hand2_mate_pos, self.R_part_goal_rot = part_mate_hand_pos(self.sim.big_part_anchor,
                                               self.sim.big_part_goal_quat2,
-                                              self.sim.hand_to_small,
+                                              self.sim.part_grasp_offset,
                                               part_offset,
                                               weld_big_R,
                                               weld_R,
@@ -174,17 +183,17 @@ class TaskPlanner():
         self.R_part_goal_rot = quat_mul(hand2_mate_rot, quat_conjugate(self.hand2_to_part_rot_offset))
 
         hand2_mate_pose = torch.cat([hand2_mate_pos, hand2_mate_rot], dim=1)
-        self.r2_R_mate = ['T_2_5', hand2_mate_pose, ['T_2_4', 'T_1_3'], [], 'plan', 'close', False]
+        self.r2_R_mate = ['T_2_6', hand2_mate_pose, ['T_2_5'], [], 'plan', 'close', False]
         self.r2_task_queue.append(self.r2_R_mate)
-        self.task_lib['T_2_5'] = self.r2_R_mate
+        self.task_lib['T_2_6'] = self.r2_R_mate
 
         # Robot 2 return home
         home_pos = self.sim.init_pos[:, 1]
         home_rot = self.sim.init_rot[:, 1]
         home_pose = torch.cat([home_pos, home_rot], dim=1)
-        self.r2_return = ['T_2_6', home_pose, [f'T_3_{self.part1_weld_num + 1 + 2}'], [], 'no-plan', 'open', False]
+        self.r2_return = ['T_2_7', home_pose, [f'T_3_{self.part1_weld_num + 1 + len(self.pre_ids_R)}'], [], 'no-plan', 'open', False]
         self.r2_task_queue.append(self.r2_return)
-        self.task_lib['T_2_6'] = self.r2_return
+        self.task_lib['T_2_7'] = self.r2_return
 
     def create_task_lib_r3(self):
         hover_offset = 0.15
@@ -199,17 +208,17 @@ class TaskPlanner():
         weld_side = look_at_quat(desired_z_side, reference_up)
 
         # === Part 1 weld IDs ===
-        pre_ids = [0, 3, 6]
-        post_ids = [1, 2, 4, 5]
-        pre_positions = [self.sim.big_part_welding_pos[:, i, :] for i in pre_ids]
-        post_positions = [self.sim.big_part_welding_pos[:, i, :] for i in post_ids]
+        self.pre_ids = [3, 6]
+        self.post_ids = [0, 1, 2, 4, 5]
+        pre_positions = [self.sim.big_part_welding_pos[:, i, :] for i in self.pre_ids]
+        post_positions = [self.sim.big_part_welding_pos[:, i, :] for i in self.post_ids]
         start_pose = self.sim.init_pos[:, 2]
 
         pre_order = self.get_order_with_start(pre_positions, start_pose=start_pose)
         task_count = 0
         # === Pre-weld tasks (Part 1) ===
         for local_idx in pre_order:
-            weld_idx = pre_ids[local_idx]
+            weld_idx = self.pre_ids[local_idx]
             weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
             weld_rot = weld_top if weld_idx <= 3 else weld_side
 
@@ -221,7 +230,6 @@ class TaskPlanner():
                 # weld_pos[:, 0] -= grasp_offset
                 hover_weld_pos[:, 0] -= hover_offset
 
-            hover_pose = torch.cat([hover_weld_pos, weld_rot], dim=1)
             weld_pose = torch.cat([weld_pos, weld_rot], dim=1)
 
             # hover_name = f"T_3_{task_count+1}"
@@ -236,7 +244,7 @@ class TaskPlanner():
         # === Post-weld tasks (Part 1) ===
         post_order = self.get_order_with_start(post_positions, start_pose=last_pose)
         for local_idx in post_order:
-            weld_idx = post_ids[local_idx]
+            weld_idx = self.post_ids[local_idx]
             weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
             weld_rot = weld_top if weld_idx <= 3 else weld_side
 
@@ -270,16 +278,16 @@ class TaskPlanner():
         last_pose = home_pos
 
         # === Part 2 weld IDs ===
-        pre_ids_R = [7, 11]
-        post_ids_R = [9, 10]
-        pre_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in pre_ids_R]
-        post_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in post_ids_R]
+        self.pre_ids_R = [7, 11]
+        self.post_ids_R = [9, 10]
+        pre_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in self.pre_ids_R]
+        post_positions_R = [self.sim.big_part_welding_pos[:, i, :] for i in self.post_ids_R]
 
         pre_order_R = self.get_order_with_start(pre_positions_R, start_pose=last_pose)
 
         # === Pre-weld tasks (Part 2) ===
         for local_idx in pre_order_R:
-            weld_idx = pre_ids_R[local_idx]
+            weld_idx = self.pre_ids_R[local_idx]
             weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
             weld_rot = weld_top
 
@@ -292,8 +300,8 @@ class TaskPlanner():
 
             # hover_name = f"T_3_{task_count+1}"
             weld_name = f"T_3_{task_count+1}"
-            # self.r3_task_queue.append([hover_name, hover_pose, [f"T_3_{task_count}", "T_2_5"], [], 'plan', 'open', False])
-            self.r3_task_queue.append([weld_name, weld_pose, ["T_2_5"], [], 'plan', 'auto', False])
+            # self.r3_task_queue.append([hover_name, hover_pose, [f"T_3_{task_count}", "T_2_7"], [], 'plan', 'open', False])
+            self.r3_task_queue.append([weld_name, weld_pose, ["T_2_6"], [], 'plan', 'auto', False])
             # self.task_lib[hover_name] = self.r3_task_queue[-2]
             self.task_lib[weld_name] = self.r3_task_queue[-1]
             task_count += 1
@@ -302,7 +310,7 @@ class TaskPlanner():
         # === Post-weld tasks (Part 2) ===
         post_order_R = self.get_order_with_start(post_positions_R, start_pose=last_pose)
         for local_idx in post_order_R:
-            weld_idx = post_ids_R[local_idx]
+            weld_idx = self.post_ids_R[local_idx]
             weld_pos = self.sim.big_part_welding_pos[:, weld_idx, :].clone()
             weld_rot = weld_top
 
@@ -357,9 +365,9 @@ class TaskPlanner():
         if int(cur_arm_task[0][2]) != 3:
             if gripper_mode == "close" or gripper_mode == "auto":
                 part_dist = torch.norm(part_pos - hand_pos, dim=-1).unsqueeze(-1)
-                gripper_sep = self.sim.dof_pos[:, 0, self.sim.robot_dof] + self.sim.dof_pos[:, 0, self.sim.robot_dof+1]
+                gripper_sep = self.sim.dof_pos[:, int(cur_arm_task[0][2])-1, self.sim.robot_dof] + self.sim.dof_pos[:, int(cur_arm_task[0][2])-1, self.sim.robot_dof+1]
                 gripped = (gripper_sep < 0.045) & (part_dist < self.sim.grasp_offset + 0.5 * 0.03)
-                reached = (hand_err < 0.03).squeeze() & gripped.squeeze()
+                reached = (hand_err < 0.012).squeeze() & gripped.squeeze()
 
             else:
                 reached = (hand_err < 0.03).squeeze()
@@ -389,7 +397,7 @@ class TaskPlanner():
     def task_assignment(self, timer=0, real_timer=0):
         # Process tasks for each robot.
         self.r1_task, self.r1_task_queue = self.assignment_func(self.r1_task, self.r1_task_queue, 
-                                                                self.sim.hand1_pos, self.sim.big_part_pos)
+                                                                self.sim.hand1_tip_pos, self.sim.big_part_pos)
         if self.r2_task == None or int(self.r2_task[0][-1]) <= 2:
             arm2_part_pos = self.sim.L_part_pos
         else:
@@ -398,11 +406,13 @@ class TaskPlanner():
         if self.task_lib[f'T_3_{self.part1_weld_num + 1 + 2}'][-1]:
             self.sim.R_part = True
         self.r2_task, self.r2_task_queue = self.assignment_func(self.r2_task, self.r2_task_queue, 
-                                                                self.sim.hand2_pos, arm2_part_pos)
+                                                                self.sim.hand2_tip_pos, arm2_part_pos)
 
         L_hand_mate = self.r2_L_mate[1][:, :3]
-        mate_err = torch.norm(L_hand_mate - self.sim.hand2_pos, dim=-1)
-        if torch.sum(mate_err < 0.01).item() == self.sim.num_envs:
+        big_hand_mate = self.r1_mate[1][:, :3]
+        arm1_mate_err = torch.norm(self.sim.hand1_tip_pos - big_hand_mate, dim=-1)
+        arm2_mate_err = torch.norm(self.sim.hand2_tip_pos - L_hand_mate, dim=-1)
+        if torch.sum(arm1_mate_err < 0.01).item() == self.sim.num_envs and torch.sum(arm2_mate_err < 0.01).item() == self.sim.num_envs:
             self.arm3_flag = True
         if self.arm3_flag:
             self.r3_task, self.r3_task_queue = self.assignment_func(self.r3_task, self.r3_task_queue,

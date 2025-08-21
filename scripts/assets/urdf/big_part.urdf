@@ -31,7 +31,7 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.2 0.02 0.02"/>
+        <box size="0.04 0.04 0.04"/>
       </geometry>
       <material name="gray">
         <color rgba="0.6 0.6 0.6 1.0"/>
@@ -41,7 +41,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.2 0.02 0.02"/>
+        <box size="0.04 0.04 0.04"/>
       </geometry>
     </collision>
 
@@ -57,7 +57,7 @@
   <joint name="base_to_link1" type="fixed">
     <!-- The base_link is 0.01m tall, link1 is 0.02m tall -->
     <!-- So we raise it by 0.5*(0.01 + 0.02) = 0.015 to stack flat -->
-    <origin xyz="0 0 0.015" rpy="0 0 0"/>
+    <origin xyz="0 0 0.025" rpy="0 0 0"/>
     <parent link="base_link"/>
     <child link="link1"/>
   </joint>

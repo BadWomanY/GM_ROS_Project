@@ -13,8 +13,8 @@ class RS007MoveItCommander:
         self.scene = moveit_commander.PlanningSceneInterface()
         self.robot1 = moveit_commander.MoveGroupCommander("a1_manipulator")
         # self.robot1.set_planner_id("PTP")
-        self.robot1.set_max_velocity_scaling_factor(0.07)
-        self.robot1.set_max_acceleration_scaling_factor(0.07)
+        self.robot1.set_max_velocity_scaling_factor(0.2)
+        self.robot1.set_max_acceleration_scaling_factor(0.2)
         
         self.tool1_pub = rospy.Publisher("/a1/franka_gripper_controller/command", JointTrajectory, queue_size=1)
         pose1 = self.robot1.get_current_pose(end_effector_link="a1_weld_tip").pose
@@ -23,8 +23,8 @@ class RS007MoveItCommander:
 
         self.robot2 = moveit_commander.MoveGroupCommander("a2_manipulator")
         # self.robot2.set_planner_id("PTP")
-        self.robot2.set_max_velocity_scaling_factor(0.07)
-        self.robot2.set_max_acceleration_scaling_factor(0.07)
+        self.robot2.set_max_velocity_scaling_factor(0.2)
+        self.robot2.set_max_acceleration_scaling_factor(0.2)
         
         self.tool2_pub = rospy.Publisher("/a2/franka_gripper_controller/command", JointTrajectory, queue_size=1)
         pose2 = self.robot2.get_current_pose(end_effector_link="a2_weld_tip").pose
@@ -33,8 +33,8 @@ class RS007MoveItCommander:
 
         self.robot3 = moveit_commander.MoveGroupCommander("a3_manipulator")
         # self.robot3.set_planner_id("PTP")
-        self.robot3.set_max_velocity_scaling_factor(0.07)
-        self.robot3.set_max_acceleration_scaling_factor(0.07)
+        self.robot3.set_max_velocity_scaling_factor(0.2)
+        self.robot3.set_max_acceleration_scaling_factor(0.2)
         
         self.tool3_pub = rospy.Publisher("/a3/franka_gripper_controller/command", JointTrajectory, queue_size=1)
         pose3 = self.robot3.get_current_pose(end_effector_link="a3_weld_tip").pose

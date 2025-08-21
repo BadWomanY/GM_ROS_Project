@@ -14,6 +14,8 @@ find_package(catkin REQUIRED COMPONENTS
 add_service_files(
   FILES
   PlanPose.srv
+  AttachPart.srv
+  DetachPart.srv
 )
 
 catkin_python_setup()

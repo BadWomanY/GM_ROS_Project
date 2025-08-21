@@ -1,0 +1,9 @@
+<launch>
+  <!-- Launch the MoveIt Attached Objects Server -->
+  <node name="moveit_attached_objects_server" 
+        pkg="isaac_ros_bridge" 
+        type="moveit_attached_objects_server.py" 
+        output="screen">
+    <param name="debug" value="false"/>
+  </node>
+</launch>

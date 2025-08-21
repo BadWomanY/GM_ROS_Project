@@ -1,18 +1,22 @@
 <launch>
   <!-- Declare all the args you want to make configurable -->
-  <arg name="simulation" default="false" />
+  <arg name="a1_sim" default="true" />
+  <arg name="a2_sim" default="true" />
+  <arg name="a3_sim" default="true" />
   <arg name="ip" default="192.168.50.11" />
   <arg name="robot" default="RS007L" />
   <!-- Add others like debug, viewer, etc., if needed -->
 
   <!-- Pass them to the included bringup launch -->
-  <include file="$(find khi_robot_bringup)/launch/rs007l_bringup.launch">
-    <arg name="robot" value="$(arg robot)" />
-    <arg name="simulation" value="$(arg simulation)" />
-    <arg name="ip" value="$(arg ip)" />
+  <include file="$(find khi_robot_bringup)/launch/multi_rs007l_bringup.launch">
+    <!-- <arg name="robot" value="$(arg robot)" /> -->
+    <arg name="a1_sim" value="$(arg a1_sim)" />
+    <arg name="a2_sim" value="$(arg a2_sim)" />
+    <arg name="a3_sim" value="$(arg a3_sim)" />
+    <!-- <arg name="ip" value="$(arg ip)" /> -->
   </include>
 
-  <include file="$(find khi_rs007l_moveit_config)/launch/moveit_planning_execution.launch">
+  <include file="$(find khi_rs007l_moveit_config)/launch/multi_moveit_planning_execution.launch">
   </include>
 
   <!-- Add joint commander script -->
@@ -33,10 +37,18 @@
   />
 
   <node
+    name="object_attach_server"
+    pkg="isaac_ros_bridge"
+    type="moveit_attached_objects_server.py"
+    output="screen"
+    cwd="node"
+  />
+
+  <!-- <node
     name="isaac_gym_sim"
     pkg="isaac_ros_bridge"
     type="gym_test.py"
     output="screen"
     cwd="node"
-  />
+  /> -->
 </launch>

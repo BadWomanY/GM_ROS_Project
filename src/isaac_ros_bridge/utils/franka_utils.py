@@ -148,4 +148,4 @@ def part_mate_hand_pos(anchor, anchor_rot, hand_part_offset, part_offset, big_pa
     part_z_offset = torch.tensor([0, 0, -(big_part_thickness + small_part_thickness) / 2], device=device)
     part2_align = anchor + quat_rotate(anchor_rot, part_offset + part_z_offset)
     hand2_align = part2_align + quat_rotate(part_goal_quat, hand_part_offset)
-    return hand2_align, part_goal_quat
+    return hand2_align, part_goal_quat, part2_align

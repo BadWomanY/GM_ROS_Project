@@ -306,7 +306,7 @@ class MoveItAttachedObjectsServer:
         
         # Create a copy of the base pose
         short_pose = Pose()
-        short_pose.position.x = base_pose.position.x + 0.07  # Offset in X
+        short_pose.position.x = base_pose.position.x - 0.07  # Offset in X
         short_pose.position.y = base_pose.position.y + 0.08  # Offset in Y
         short_pose.position.z = base_pose.position.z + 0.025
         

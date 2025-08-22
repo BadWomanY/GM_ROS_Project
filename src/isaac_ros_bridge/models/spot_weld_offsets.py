@@ -6,7 +6,7 @@ device = "cuda:0"
 """=============================Spot weld locations in local frames============================="""
 L_part_offset = torch.tensor([-0.05, -0.13, -0.005]).unsqueeze(0).to(device) # shape: (1, 3)
 #TODO: Update this offset based on the simulation internal offset. 
-R_part_offset = torch.tensor([0.05, 0.12, -0.005]).unsqueeze(0).to(device) # shape: (1, 3) 
+R_part_offset = torch.tensor([0.05, 0.13, -0.005]).unsqueeze(0).to(device) # shape: (1, 3) 
 
 L_part_welding_offset = torch.tensor([
     [0.0,  0.08, 0.0],

@@ -30,6 +30,8 @@ class ArmController1:
         self.plan_srv = None
         self.traj = None
         self.is_big_part_grasped = False
+        global global_big_part_grasped
+        global_big_part_grasped = False
 
         # ---------- ROS comms ----------
         self.joint_names = [f"a1_joint{i+1}" for i in range(self.arm_dof)]
@@ -192,12 +194,72 @@ class ArmController1:
                 "orientation": {"x": table0_quat[0].item(), "y": table0_quat[1].item(), "z": table0_quat[2].item(), "w": table0_quat[3].item()},
             },
         }
+        
+        if self.task_description == "mate":
+            weld_big_L = self.sim.big_part_welding_pos[:, :7]
+            weld_L = self.sim.L_part_welding_pos
+            part_offset = L_part_offset
+            _, L_part_goal_rot, L_part_goal_pos = part_mate_hand_pos(self.sim.big_part_anchor,
+                                                self.sim.big_part_goal_quat,
+                                                self.sim.part_grasp_offset,
+                                                part_offset,
+                                                weld_big_L,
+                                                weld_L,
+                                                self.device)
+            part_q = self.sim.L_part_rot.clone()
+            hand2_to_Lpart_rot_offset = quat_mul(quat_conjugate(self.sim.goal_rot_gripp2), part_q)
+            hand2_mate_rot = quat_mul(L_part_goal_rot, quat_conjugate(self.sim.goal_rot_gripp2))
+            L_part_goal_rot = quat_mul(hand2_mate_rot, quat_conjugate(hand2_to_Lpart_rot_offset))
+            L_center = L_part_goal_pos[0]
+            L_quat = L_part_goal_rot[0]
+            L_long = [0.04, 0.20, 0.01]
 
-        # Big part (base plate) - only add if not grasped
-        big_center = self.sim.big_part_pos[0]
-        big_quat = self.sim.big_part_rot[0]
-        big_size = [0.30, 0.30, 0.01]
+            boxes_dict["l_part"] = {
+                "id": "l_part",
+                "size": L_long,
+                "pose": {
+                    "frame_id": "world",
+                    "position": {"x": L_center.tolist()[0], "y": L_center.tolist()[1], "z": L_center.tolist()[2]},
+                    "orientation": {"x": L_quat.tolist()[0], "y": L_quat.tolist()[1], "z": L_quat.tolist()[2], "w": L_quat.tolist()[3]},
+                },
+            }
+
+            # L part short segment
+            L_short = L_center + quat_rotate(L_part_goal_rot, torch.tensor([[0.07,-0.08,0.0]], device=self.device))[0]
+            z_rot_90 = torch.tensor([0.0, 0.0, 0.7071, 0.7071], device=self.device)  # 90 deg around z
+            L_short_quat = quat_mul(L_quat, z_rot_90)
+            L_short_size = [0.04, 0.1, 0.01]
+
+            boxes_dict["l_short_part"] = {
+                "id": "l_short_part",
+                "size": L_short_size,
+                "pose": {
+                    "frame_id": "world",
+                    "position": {"x": L_short.tolist()[0], "y": L_short.tolist()[1], "z": L_short.tolist()[2]},
+                    "orientation": {"x": L_short_quat.tolist()[0], "y": L_short_quat.tolist()[1], "z": L_short_quat.tolist()[2], "w": L_short_quat.tolist()[3]},
+                },
+            }
+
+            # Small cube near L part
+            cube_center = L_center + quat_rotate(L_part_goal_rot, torch.tensor([[0,0,0.025]], device=self.device))[0]
+            cube_quat = L_quat
+            cube_size = [0.04, 0.04, 0.04]
+
+            boxes_dict["small_cube"] = {
+                "id": "small_cube",
+                "size": cube_size,
+                "pose": {
+                    "frame_id": "world",
+                    "position": {"x": cube_center.tolist()[0], "y": cube_center.tolist()[1], "z": cube_center.tolist()[2]},
+                    "orientation": {"x": cube_quat.tolist()[0], "y": cube_quat.tolist()[1], "z": cube_quat.tolist()[2], "w": cube_quat.tolist()[3]},
+                },
+            }
+
         if not self.is_big_part_grasped:
+            # Big part (base plate) - only add if not grasped
+            big_center = self.sim.big_part_pos[0]
+            big_quat = self.sim.big_part_rot[0]
+            big_size = [0.30, 0.30, 0.01]
             boxes_dict["big_part"] = {
                 "id": "big_part",
                 "size": big_size,
@@ -226,86 +288,86 @@ class ArmController1:
                 },
             }
 
-        L_center = self.sim.L_part_pos[0]
-        L_quat = self.sim.L_part_rot[0]
-        L_long = [0.04, 0.20, 0.01]
+        # L_center = self.sim.L_part_pos[0]
+        # L_quat = self.sim.L_part_rot[0]
+        # L_long = [0.04, 0.20, 0.01]
 
-        boxes_dict["l_part"] = {
-            "id": "l_part",
-            "size": L_long,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": L_center.tolist()[0], "y": L_center.tolist()[1], "z": L_center.tolist()[2]},
-                "orientation": {"x": L_quat.tolist()[0], "y": L_quat.tolist()[1], "z": L_quat.tolist()[2], "w": L_quat.tolist()[3]},
-            },
-        }
+        # boxes_dict["l_part"] = {
+        #     "id": "l_part",
+        #     "size": L_long,
+        #     "pose": {
+        #         "frame_id": "world",
+        #         "position": {"x": L_center.tolist()[0], "y": L_center.tolist()[1], "z": L_center.tolist()[2]},
+        #         "orientation": {"x": L_quat.tolist()[0], "y": L_quat.tolist()[1], "z": L_quat.tolist()[2], "w": L_quat.tolist()[3]},
+        #     },
+        # }
 
-        # L part short segment
-        L_short = self.sim.L_part_pos[0] + quat_rotate(self.sim.L_part_rot, torch.tensor([[0.07,-0.08,0.0]], device=self.device))[0]
-        z_rot_90 = torch.tensor([0.0, 0.0, 0.7071, 0.7071], device=self.device)  # 90 deg around z
-        L_short_quat = quat_mul(self.sim.L_part_rot[0], z_rot_90)
-        L_short_size = [0.04, 0.1, 0.01]
+        # # L part short segment
+        # L_short = self.sim.L_part_pos[0] + quat_rotate(self.sim.L_part_rot, torch.tensor([[0.07,-0.08,0.0]], device=self.device))[0]
+        # z_rot_90 = torch.tensor([0.0, 0.0, 0.7071, 0.7071], device=self.device)  # 90 deg around z
+        # L_short_quat = quat_mul(self.sim.L_part_rot[0], z_rot_90)
+        # L_short_size = [0.04, 0.1, 0.01]
 
-        boxes_dict["l_short_part"] = {
-            "id": "l_short_part",
-            "size": L_short_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": L_short.tolist()[0], "y": L_short.tolist()[1], "z": L_short.tolist()[2]},
-                "orientation": {"x": L_short_quat.tolist()[0], "y": L_short_quat.tolist()[1], "z": L_short_quat.tolist()[2], "w": L_short_quat.tolist()[3]},
-            },
-        }
+        # boxes_dict["l_short_part"] = {
+        #     "id": "l_short_part",
+        #     "size": L_short_size,
+        #     "pose": {
+        #         "frame_id": "world",
+        #         "position": {"x": L_short.tolist()[0], "y": L_short.tolist()[1], "z": L_short.tolist()[2]},
+        #         "orientation": {"x": L_short_quat.tolist()[0], "y": L_short_quat.tolist()[1], "z": L_short_quat.tolist()[2], "w": L_short_quat.tolist()[3]},
+        #     },
+        # }
 
-        # Small cube near L part
-        cube_center_sim = (self.sim.L_part_pos + quat_rotate(
-            self.sim.L_part_rot, torch.tensor([[0,0,0.025]], device=self.device)
-        ))[0]
-        cube_center = cube_center_sim
-        cube_quat = self.sim.L_part_rot[0]
-        cube_size = [0.04, 0.04, 0.04]
+        # # Small cube near L part
+        # cube_center_sim = (self.sim.L_part_pos + quat_rotate(
+        #     self.sim.L_part_rot, torch.tensor([[0,0,0.025]], device=self.device)
+        # ))[0]
+        # cube_center = cube_center_sim
+        # cube_quat = self.sim.L_part_rot[0]
+        # cube_size = [0.04, 0.04, 0.04]
 
-        boxes_dict["small_cube"] = {
-            "id": "small_cube",
-            "size": cube_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": cube_center.tolist()[0], "y": cube_center.tolist()[1], "z": cube_center.tolist()[2]},
-                "orientation": {"x": cube_quat.tolist()[0], "y": cube_quat.tolist()[1], "z": cube_quat.tolist()[2], "w": cube_quat.tolist()[3]},
-            },
-        }
+        # boxes_dict["small_cube"] = {
+        #     "id": "small_cube",
+        #     "size": cube_size,
+        #     "pose": {
+        #         "frame_id": "world",
+        #         "position": {"x": cube_center.tolist()[0], "y": cube_center.tolist()[1], "z": cube_center.tolist()[2]},
+        #         "orientation": {"x": cube_quat.tolist()[0], "y": cube_quat.tolist()[1], "z": cube_quat.tolist()[2], "w": cube_quat.tolist()[3]},
+        #     },
+        # }
 
-        # R part
-        R_center = self.sim.R_part_pos[0]
-        R_quat = self.sim.R_part_rot[0]
-        R_size = [0.04, 0.20, 0.01]
+        # # R part
+        # R_center = self.sim.R_part_pos[0]
+        # R_quat = self.sim.R_part_rot[0]
+        # R_size = [0.04, 0.20, 0.01]
 
-        boxes_dict["r_part"] = {
-            "id": "r_part",
-            "size": R_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": R_center.tolist()[0], "y": R_center.tolist()[1], "z": R_center.tolist()[2]},
-                "orientation": {"x": R_quat.tolist()[0], "y": R_quat.tolist()[1], "z": R_quat.tolist()[2], "w": R_quat.tolist()[3]},
-            },
-        }
+        # boxes_dict["r_part"] = {
+        #     "id": "r_part",
+        #     "size": R_size,
+        #     "pose": {
+        #         "frame_id": "world",
+        #         "position": {"x": R_center.tolist()[0], "y": R_center.tolist()[1], "z": R_center.tolist()[2]},
+        #         "orientation": {"x": R_quat.tolist()[0], "y": R_quat.tolist()[1], "z": R_quat.tolist()[2], "w": R_quat.tolist()[3]},
+        #     },
+        # }
 
-        # Small cube near R part
-        R_cube_center_sim = (self.sim.R_part_pos + quat_rotate(
-            self.sim.R_part_rot, torch.tensor([[0,0,0.02]], device=self.device)
-        ))[0]
-        R_cube_center = R_cube_center_sim
-        R_cube_quat = self.sim.R_part_rot[0]
-        cube_size = [0.04, 0.04, 0.04]
+        # # Small cube near R part
+        # R_cube_center_sim = (self.sim.R_part_pos + quat_rotate(
+        #     self.sim.R_part_rot, torch.tensor([[0,0,0.02]], device=self.device)
+        # ))[0]
+        # R_cube_center = R_cube_center_sim
+        # R_cube_quat = self.sim.R_part_rot[0]
+        # cube_size = [0.04, 0.04, 0.04]
 
-        boxes_dict["r_small_cube"] = {
-            "id": "r_small_cube",
-            "size": cube_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": R_cube_center.tolist()[0], "y": R_cube_center.tolist()[1], "z": R_cube_center.tolist()[2]},
-                "orientation": {"x": R_cube_quat.tolist()[0], "y": R_cube_quat.tolist()[1], "z": R_cube_quat.tolist()[2], "w": R_cube_quat.tolist()[3]},
-            },
-        }
+        # boxes_dict["r_small_cube"] = {
+        #     "id": "r_small_cube",
+        #     "size": cube_size,
+        #     "pose": {
+        #         "frame_id": "world",
+        #         "position": {"x": R_cube_center.tolist()[0], "y": R_cube_center.tolist()[1], "z": R_cube_center.tolist()[2]},
+        #         "orientation": {"x": R_cube_quat.tolist()[0], "y": R_cube_quat.tolist()[1], "z": R_cube_quat.tolist()[2], "w": R_cube_quat.tolist()[3]},
+        #     },
+        # }
 
         # Convert dictionary back to list for ROS parameter
         boxes = list(boxes_dict.values())
@@ -342,11 +404,12 @@ class ArmController1:
         self.tool_pub.publish(jt)
 
     # ---------- main step ----------
-    def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
+    def step(self, task_name, cur_pose, goal_pose, task_description, gripper_mode):
         if not self.traj or self.task_name != task_name:
             # print(f"Arm1: {task_name}")
             self.traj = None
             self.task_name = task_name
+            self.task_description = task_description
 
             # Ensure services connection for attached collision objects
             self.ensure_services_connected()
@@ -373,14 +436,17 @@ class ArmController1:
             self.is_big_part_grasped = False
         
         # Handle big part attachment/detachment
+        global global_big_part_grasped
         if self.is_big_part_grasped and not was_big_part_grasped:
             # Part was just grasped - attach collision object
             rospy.loginfo("Attaching big part to gripper")
             self._attach_part_to_gripper("big_part")
+            global_big_part_grasped = True  # Update global state
         elif not self.is_big_part_grasped and was_big_part_grasped:
             # Part was just released - detach collision object
             rospy.loginfo("Detaching big part from gripper")
             self._detach_part_from_gripper("big_part")
+            global_big_part_grasped = False  # Update global state
         
         if gripper_mode == "auto":
             final_joint_state_err = torch.norm(torch.tensor(self.traj.points[-1].positions, device=self.device) - self.q_real).item()
@@ -589,7 +655,8 @@ class ArmController2:
             },
         }
 
-        # Big part (base plate)
+        # Big part (base plate) - only add if not grasped by Arm1
+        global global_big_part_grasped
         big_center = self.sim.big_part_anchor
         big_quat = self.sim.big_part_goal_quat[0]
         big_size = [0.30, 0.30, 0.01]
@@ -604,40 +671,43 @@ class ArmController2:
             },
         }
 
-        big_center_cur = self.sim.big_part_pos[0]
-        big_quat_cur = self.sim.big_part_rot[0]
-        big_size = [0.30, 0.30, 0.01]
+        # Current big part position - only add if not grasped by Arm1
+        if not global_big_part_grasped:
+            big_center_cur = self.sim.big_part_pos[0]
+            big_quat_cur = self.sim.big_part_rot[0]
+            big_size = [0.30, 0.30, 0.01]
 
-        boxes_dict["big_part"] = {
-            "id": "big_part",
-            "size": big_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": big_center_cur.tolist()[0], "y": big_center_cur.tolist()[1], "z": big_center_cur.tolist()[2]},
-                "orientation": {"x": big_quat_cur.tolist()[0], "y": big_quat_cur.tolist()[1], "z": big_quat_cur.tolist()[2], "w": big_quat_cur.tolist()[3]},
-            },
-        }
+            boxes_dict["big_part"] = {
+                "id": "big_part",
+                "size": big_size,
+                "pose": {
+                    "frame_id": "world",
+                    "position": {"x": big_center_cur.tolist()[0], "y": big_center_cur.tolist()[1], "z": big_center_cur.tolist()[2]},
+                    "orientation": {"x": big_quat_cur.tolist()[0], "y": big_quat_cur.tolist()[1], "z": big_quat_cur.tolist()[2], "w": big_quat_cur.tolist()[3]},
+                },
+            }
 
-        # Small cube near big part
-        big_cube_center_sim = (self.sim.big_part_pos + quat_rotate(
-            self.sim.big_part_rot, torch.tensor([[0,0,0.025]], device=self.device)
-        ))[0]
-        big_cube_center = big_cube_center_sim
-        big_cube_quat = self.sim.big_part_rot[0]
-        big_cube_size = [0.04, 0.04, 0.04]
+        # Small cube near big part - only add if big part not grasped by Arm1
+        if not global_big_part_grasped:
+            big_cube_center_sim = (self.sim.big_part_pos + quat_rotate(
+                self.sim.big_part_rot, torch.tensor([[0,0,0.025]], device=self.device)
+            ))[0]
+            big_cube_center = big_cube_center_sim
+            big_cube_quat = self.sim.big_part_rot[0]
+            big_cube_size = [0.04, 0.04, 0.04]
 
-        boxes_dict["big_part_cube"] = {
-            "id": "big_part_cube",
-            "size": big_cube_size,
-            "pose": {
-                "frame_id": "world",
-                "position": {"x": big_cube_center.tolist()[0], "y": big_cube_center.tolist()[1], "z": big_cube_center.tolist()[2]},
-                "orientation": {"x": big_cube_quat.tolist()[0], "y": big_cube_quat.tolist()[1], "z": big_cube_quat.tolist()[2], "w": big_cube_quat.tolist()[3]},
-            },
-        }
+            boxes_dict["big_part_cube"] = {
+                "id": "big_part_cube",
+                "size": big_cube_size,
+                "pose": {
+                    "frame_id": "world",
+                    "position": {"x": big_cube_center.tolist()[0], "y": big_cube_center.tolist()[1], "z": big_cube_center.tolist()[2]},
+                    "orientation": {"x": big_cube_quat.tolist()[0], "y": big_cube_quat.tolist()[1], "z": big_cube_quat.tolist()[2], "w": big_cube_quat.tolist()[3]},
+                },
+            }
 
         # L part - only add if not grasped (to avoid collision with gripper)
-        if not self.is_L_grasped:
+        if not self.is_L_grasped or self.task_description == "home":
             L_center = self.sim.L_part_pos[0]
             L_quat = self.sim.L_part_rot[0]
             L_long = [0.04, 0.20, 0.01]
@@ -686,7 +756,7 @@ class ArmController2:
                 },
             }
 
-        if not self.is_R_grasped:
+        if not self.is_R_grasped or self.task_description == "home":
             # R part
             R_center = self.sim.R_part_pos[0]
             R_quat = self.sim.R_part_rot[0]
@@ -755,16 +825,23 @@ class ArmController2:
         self.tool_pub.publish(jt)
 
     # ---------- main step ----------
-    def step(self, task_name, cur_pose, goal_pose, plan_mode, gripper_mode):
+    def step(self, task_name, cur_pose, goal_pose, task_description, gripper_mode):
         if not self.traj or self.task_name != task_name:
             # print(f"Arm2: {task_name}")
             self.traj = None
             self.task_name = task_name
+            self.task_description = task_description
 
             # Ensure services connection for attached collision objects
             self.ensure_services_connected()
 
             # Push boxes to MoveIt
+            
+            if task_description == "home":
+                self._detach_part_from_gripper("L_part")
+                self._detach_part_from_gripper("R_part")
+                self._send_gripper(0.4)
+            
             self._push_boxes_to_moveit()
 
             # Plan and execute trajectory

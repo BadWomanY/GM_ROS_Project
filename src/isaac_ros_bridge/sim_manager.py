@@ -285,9 +285,9 @@ class RobotCellSim:
         big_part_long_axis = torch.tensor([1.0, 0.0, 0.0], device=device) # unit vector along X of big part.
         big_part_corners = big_part_long_axis.repeat(self.num_envs, 1)
 
-        L_part_long_axis = torch.tensor([1.0, 0.0, 0.0], device=device)  # unit vector along Y of L part.
+        L_part_long_axis = torch.tensor([0.0, 1.0, 0.0], device=device)  # unit vector along Y of L part.
         L_part_corners = L_part_long_axis.repeat(self.num_envs, 1)  # (self.num_envs, 3)
-        R_part_long_axis = torch.tensor([0.0, 1.0, 0.0], device=device)  # unit vector along Y of L part.
+        R_part_long_axis = torch.tensor([1.0, 0.0, 0.0], device=device)  # unit vector along Y of L part.
         R_part_corners = R_part_long_axis.repeat(self.num_envs, 1)  # (self.num_envs, 3)
 
         # downard axis

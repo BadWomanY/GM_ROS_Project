@@ -69,19 +69,19 @@ if __name__ == "__main__":
         
 
         # Planning required
-        arm1_plan = cur_task[0][-3]
-        arm2_plan = cur_task[1][-3]
+        arm1_task_description = cur_task[0][-3]
+        arm2_task_description = cur_task[1][-3]
         
         
         # Each robot plans/follows a path to reach goal.
-        arm1_controller.step(arm1_task_name, arm1_pose, arm1_goal_pose, arm1_plan, gripper1_mode)
-        arm2_controller.step(arm2_task_name, arm2_pose, arm2_goal_pose, arm2_plan, gripper2_mode)
+        arm1_controller.step(arm1_task_name, arm1_pose, arm1_goal_pose, arm1_task_description, gripper1_mode)
+        arm2_controller.step(arm2_task_name, arm2_pose, arm2_goal_pose, arm2_task_description, gripper2_mode)
         if cur_task[2] is not None:
             arm3_task_name = cur_task[2][0]
             arm3_goal_pose = cur_task[2][1]
             gripper3_mode = cur_task[2][-2]
-            arm3_plan = cur_task[2][-3]
+            arm3_task_description = cur_task[2][-3]
             sim.arm3_flag = False
-            timer, real_timer = arm3_controller.step(arm3_task_name, arm3_pose, arm3_goal_pose, arm3_plan, gripper3_mode)
+            timer, real_timer = arm3_controller.step(arm3_task_name, arm3_pose, arm3_goal_pose, arm3_task_description, gripper3_mode)
         sim.update_viewer()
     sim.cleanup()

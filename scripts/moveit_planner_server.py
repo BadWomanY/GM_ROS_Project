@@ -68,10 +68,11 @@ def handle_plan(req: PlanPose) -> PlanPoseResponse:
         sync_param_boxes()
 
         group = moveit_commander.MoveGroupCommander(req.group_name)
+        group.set_planner_id("RRTstarkConfigDefault")  # Use RRT* planner
         group.set_pose_reference_frame("world")
         group.set_start_state_to_current_state()
-        group.set_max_velocity_scaling_factor(0.05)      # 0.1% of max velocity (very slow)
-        group.set_max_acceleration_scaling_factor(0.05)  # 0.1% of max acceleration (very slow)
+        group.set_max_velocity_scaling_factor(0.07)      # 0.1% of max velocity (very slow)
+        group.set_max_acceleration_scaling_factor(0.07)  # 0.1% of max acceleration (very slow)
         group.set_planning_time(3.0)
         group.set_num_planning_attempts(10)
 
